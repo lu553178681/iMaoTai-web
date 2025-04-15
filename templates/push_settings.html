@@ -1,0 +1,181 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="row">
+        <!-- 侧边栏 -->
+        <div class="col-md-3">
+            {% include 'sidebar.html' %}
+        </div>
+        
+        <!-- 主内容区 -->
+        <div class="col-md-9">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">推送设置</h5>
+                </div>
+                <div class="card-body">
+                    {% if current_user.is_authenticated %}
+                    <form method="post" action="{{ url_for('push_settings') }}">
+                        {{ form.hidden_tag() }}
+                        
+                        <div class="mb-4">
+                            <div class="form-check form-switch">
+                                {{ form.enable_push(class="form-check-input") }}
+                                {{ form.enable_push.label(class="form-check-label") }}
+                            </div>
+                            <small class="text-muted">启用后，系统将通过以下配置的渠道向您推送通知消息</small>
+                        </div>
+                        
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h6 class="mb-0">PushPlus 配置</h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-8">
+                                        <div class="mb-3">
+                                            {{ form.pushplus_token.label(class="form-label") }}
+                                            {{ form.pushplus_token(class="form-control") }}
+                                            <small class="text-muted">PushPlus是一个专业的微信消息推送平台，访问 <a href="https://www.pushplus.plus/" target="_blank">https://www.pushplus.plus/</a> 注册并获取Token</small>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4 d-flex align-items-center justify-content-end mt-3">
+                                        <button type="button" class="btn btn-sm btn-outline-primary test-push" data-type="pushplus">
+                                            <i class="bi bi-send"></i> 测试推送
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h6 class="mb-0">Server酱 配置</h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-8">
+                                        <div class="mb-3">
+                                            {{ form.serverchan_token.label(class="form-label") }}
+                                            {{ form.serverchan_token(class="form-control") }}
+                                            <small class="text-muted">Server酱是一个简单好用的微信推送服务，访问 <a href="https://sct.ftqq.com/" target="_blank">https://sct.ftqq.com/</a> 注册并获取SendKey</small>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4 d-flex align-items-center justify-content-end mt-3">
+                                        <button type="button" class="btn btn-sm btn-outline-primary test-push" data-type="serverchan">
+                                            <i class="bi bi-send"></i> 测试推送
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h6 class="mb-0">钉钉机器人 配置</h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-8">
+                                        <div class="mb-3">
+                                            {{ form.dingtalk_webhook.label(class="form-label") }}
+                                            {{ form.dingtalk_webhook(class="form-control") }}
+                                            <small class="text-muted">在钉钉群聊中添加自定义机器人并获取Webhook地址</small>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4 d-flex align-items-center justify-content-end mt-3">
+                                        <button type="button" class="btn btn-sm btn-outline-primary test-push" data-type="dingtalk">
+                                            <i class="bi bi-send"></i> 测试推送
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="text-end">
+                            {{ form.submit(class="btn btn-primary") }}
+                        </div>
+                    </form>
+                    {% else %}
+                    <div class="alert alert-warning">
+                        请先 <a href="{{ url_for('login') }}">登录</a> 后查看和管理您的推送设置。
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 测试结果模态框 -->
+<div class="modal fade" id="testResultModal" tabindex="-1" aria-labelledby="testResultModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="testResultModalLabel">推送测试结果</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="testResult" class="alert"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    $(document).ready(function() {
+        // 处理测试推送按钮点击
+        $('.test-push').click(function() {
+            const pushType = $(this).data('type');
+            const loadingHtml = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 测试中...';
+            const originalHtml = $(this).html();
+            
+            // 显示加载状态
+            $(this).html(loadingHtml);
+            $(this).prop('disabled', true);
+            
+            // 发送测试请求
+            $.ajax({
+                url: '{{ url_for("test_push") }}',
+                method: 'POST',
+                data: {
+                    push_type: pushType
+                },
+                success: function(response) {
+                    // 设置模态框内容
+                    if (response.success) {
+                        $('#testResult').removeClass('alert-danger').addClass('alert-success');
+                    } else {
+                        $('#testResult').removeClass('alert-success').addClass('alert-danger');
+                    }
+                    
+                    $('#testResult').text(response.message);
+                    
+                    // 显示模态框
+                    const modal = new bootstrap.Modal(document.getElementById('testResultModal'));
+                    modal.show();
+                },
+                error: function() {
+                    // 显示错误消息
+                    $('#testResult').removeClass('alert-success').addClass('alert-danger');
+                    $('#testResult').text('请求失败，请检查网络连接');
+                    
+                    const modal = new bootstrap.Modal(document.getElementById('testResultModal'));
+                    modal.show();
+                },
+                complete: function() {
+                    // 恢复按钮状态
+                    $('.test-push[data-type="' + pushType + '"]').html(originalHtml);
+                    $('.test-push[data-type="' + pushType + '"]').prop('disabled', false);
+                }
+            });
+        });
+    });
+</script>
+{% endblock %} 

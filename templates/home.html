@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>iMaoTai - 茅台预约工具</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <style>
+        .jumbotron {
+            padding: 4rem 2rem;
+            background-color: #f8f9fa;
+            border-radius: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand" href="{{ url_for('home') }}">iMaoTai</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link active" href="{{ url_for('home') }}">首页</a>
+                    </li>
+                    {% if current_user.is_authenticated %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('reservations') }}">我的预约</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('create_reservation') }}">新建预约</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('tasks') }}">自动预约</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('accounts') }}">茅台账号</a>
+                    </li>
+                    {% if current_user.username == 'admin' or current_user.id == 1 %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('system_config') }}">系统配置</a>
+                    </li>
+                    {% endif %}
+                    {% endif %}
+                </ul>
+                <div class="navbar-nav">
+                    {% if current_user.is_authenticated %}
+                    <span class="nav-item nav-link text-light">您好, {{ current_user.username }}</span>
+                    <a class="nav-link" href="{{ url_for('profile') }}">个人资料</a>
+                    <a class="nav-link" href="{{ url_for('logout') }}">退出</a>
+                    {% else %}
+                    <a class="nav-link" href="{{ url_for('login') }}">登录</a>
+                    <a class="nav-link" href="{{ url_for('register') }}">注册</a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <div class="jumbotron bg-light p-5 rounded mt-4">
+            <h1 class="display-4">欢迎使用 iMaoTai</h1>
+            <p class="lead">基于Python的茅台预约自动化工具，帮助您轻松抢购茅台!</p>
+            {% if current_user.is_authenticated %}
+            <hr class="my-4">
+            <div class="row mb-4">
+                <div class="col-md-3 mb-3">
+                    <div class="card border-primary">
+                        <div class="card-body text-center">
+                            <h1 class="display-5 text-primary">{{ account_count }}</h1>
+                            <h5 class="card-title">茅台账号</h5>
+                            <p class="card-text text-muted mb-0">{{ active_account_count }} 个已启用</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <div class="card border-success">
+                        <div class="card-body text-center">
+                            <h1 class="display-5 text-success">{{ task_count }}</h1>
+                            <h5 class="card-title">自动任务</h5>
+                            <p class="card-text text-muted mb-0">{{ active_task_count }} 个已启用</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <div class="card border-info">
+                        <div class="card-body text-center">
+                            <h1 class="display-5 text-info">{{ reservation_count }}</h1>
+                            <h5 class="card-title">总预约</h5>
+                            <p class="card-text text-muted mb-0">{{ success_count }} 个成功</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <div class="card border-warning">
+                        <div class="card-body text-center">
+                            <h1 class="display-5 text-warning">
+                                {% if reservation_count > 0 %}
+                                    {{ (success_count / reservation_count * 100) | int }}%
+                                {% else %}
+                                    0%
+                                {% endif %}
+                            </h1>
+                            <h5 class="card-title">成功率</h5>
+                            <p class="card-text text-muted mb-0">持续优化中</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            {% if recent_reservations %}
+            <div class="card mb-4">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="card-title mb-0">最近预约记录</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0">
+                            <thead>
+                                <tr>
+                                    <th>商品</th>
+                                    <th>状态</th>
+                                    <th>预约时间</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for reservation in recent_reservations %}
+                                <tr>
+                                    <td>
+                                        {% if reservation.item_code == "10941" %}
+                                            飞天53%500ml
+                                        {% elif reservation.item_code == "10942" %}
+                                            飞天43%500ml
+                                        {% elif reservation.item_code == "10056" %}
+                                            贵州茅台酒（黑金）53%500ml
+                                        {% else %}
+                                            未知商品
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <span class="badge 
+                                            {% if reservation.status == '成功' %}bg-success
+                                            {% elif reservation.status == '待处理' %}bg-warning
+                                            {% else %}bg-danger{% endif %}">
+                                            {{ reservation.status }}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        {% if reservation.reserve_time %}
+                                            {{ reservation.reserve_time.strftime('%Y-%m-%d %H:%M') }}
+                                        {% else %}
+                                            {{ reservation.create_time.strftime('%Y-%m-%d %H:%M') }}
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="card-footer text-center">
+                    <a href="{{ url_for('reservations') }}" class="btn btn-sm btn-outline-primary">查看全部记录</a>
+                </div>
+            </div>
+            {% endif %}
+            
+            <div class="d-grid gap-2 d-md-flex justify-content-md-start">
+                <a href="{{ url_for('accounts') }}" class="btn btn-primary me-md-2">
+                    <i class="bi bi-phone me-2"></i>管理账号
+                </a>
+                <a href="{{ url_for('tasks') }}" class="btn btn-success me-md-2">
+                    <i class="bi bi-clock-history me-2"></i>自动预约
+                </a>
+                <a href="{{ url_for('reservations') }}" class="btn btn-info text-white">
+                    <i class="bi bi-list-check me-2"></i>预约记录
+                </a>
+            </div>
+            {% else %}
+            <hr class="my-4">
+            <p>登录后即可开始使用茅台预约系统。</p>
+            <div class="d-grid gap-2 d-md-flex justify-content-md-start">
+                <a href="{{ url_for('login') }}" class="btn btn-primary me-md-2">登录</a>
+                <a href="{{ url_for('register') }}" class="btn btn-outline-primary">注册</a>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="row mt-5">
+            <div class="col-md-4">
+                <div class="card mb-4">
+                    <div class="card-body">
+                        <h5 class="card-title">快捷预约</h5>
+                        <p class="card-text">一键完成茅台预约流程，方便快捷。</p>
+                        <a href="{{ url_for('create_reservation') }}" class="btn btn-sm btn-primary">立即预约</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card mb-4">
+                    <div class="card-body">
+                        <h5 class="card-title">自动预约</h5>
+                        <p class="card-text">设置预约时间，系统自动为您执行预约。</p>
+                        <a href="{{ url_for('tasks') }}" class="btn btn-sm btn-primary">设置任务</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card mb-4">
+                    <div class="card-body">
+                        <h5 class="card-title">预约记录</h5>
+                        <p class="card-text">查看历史预约记录及状态。</p>
+                        <a href="{{ url_for('reservations') }}" class="btn btn-sm btn-primary">查看记录</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer class="bg-light py-4 mt-5">
+        <div class="container text-center">
+            <p class="mb-0">&copy; 2025 iMaoTai - 茅台预约工具</p>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html> 

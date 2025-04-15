@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>预约任务管理 - iMaoTai</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand" href="{{ url_for('home') }}">iMaoTai</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('home') }}">首页</a>
+                    </li>
+                    {% if current_user.is_authenticated %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('reservations') }}">我的预约</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" href="{{ url_for('tasks') }}">自动预约</a>
+                    </li>
+                    {% endif %}
+                </ul>
+                <div class="navbar-nav">
+                    {% if current_user.is_authenticated %}
+                    <span class="nav-item nav-link text-light">您好, {{ current_user.username }}</span>
+                    <a class="nav-link" href="{{ url_for('profile') }}">个人资料</a>
+                    <a class="nav-link" href="{{ url_for('logout') }}">退出</a>
+                    {% else %}
+                    <a class="nav-link" href="{{ url_for('login') }}">登录</a>
+                    <a class="nav-link" href="{{ url_for('register') }}">注册</a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+        
+        <div class="row">
+            <div class="col-md-10 offset-md-1">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h1>自动预约任务</h1>
+                    <a href="{{ url_for('create_task') }}" class="btn btn-primary">创建新任务</a>
+                </div>
+                
+                <div class="card">
+                    <div class="card-body">
+                        {% if tasks %}
+                        <table class="table table-striped">
+                            <thead>
+                                <tr>
+                                    <th>商品名称</th>
+                                    <th>预约时间</th>
+                                    <th>状态</th>
+                                    <th>使用账号</th>
+                                    <th>最后运行</th>
+                                    <th width="200">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for task in tasks %}
+                                <tr>
+                                    <td>
+                                        {% if task.item_code in config.ITEM_MAP %}
+                                            {{ config.ITEM_MAP[task.item_code] }}
+                                        {% else %}
+                                            {{ task.item_code }}
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ task.preferred_time.strftime('%H:%M') }}</td>
+                                    <td>
+                                        <span class="badge {% if task.enabled %}bg-success{% else %}bg-secondary{% endif %}">
+                                            {{ '已启用' if task.enabled else '已禁用' }}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        {% if task.mt_account %}
+                                            {{ task.mt_account.hidemobile }}
+                                        {% else %}
+                                            <span class="text-danger">未关联账号</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ task.last_run.strftime('%Y-%m-%d %H:%M:%S') if task.last_run else "从未运行" }}</td>
+                                    <td>
+                                        <div class="btn-group" role="group">
+                                            <form method="POST" action="{{ url_for('toggle_task', task_id=task.id) }}" class="d-inline">
+                                                <button type="submit" class="btn btn-sm {% if task.enabled %}btn-warning{% else %}btn-success{% endif %}">
+                                                    {{ '禁用' if task.enabled else '启用' }}
+                                                </button>
+                                            </form>
+                                            <form method="POST" action="{{ url_for('run_task', task_id=task.id) }}" class="d-inline ms-1">
+                                                <button type="submit" class="btn btn-sm btn-primary">立即运行</button>
+                                            </form>
+                                            <form method="POST" action="{{ url_for('delete_task', task_id=task.id) }}" class="d-inline ms-1" onsubmit="return confirm('确定要删除此任务吗?');">
+                                                <button type="submit" class="btn btn-sm btn-danger">删除</button>
+                                            </form>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                        {% else %}
+                        <div class="text-center py-4">
+                            <p class="text-muted">您还没有设置自动预约任务</p>
+                            <a href="{{ url_for('create_task') }}" class="btn btn-primary">创建第一个任务</a>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                
+                <div class="mt-4">
+                    <div class="card">
+                        <div class="card-header bg-info text-white">
+                            <i class="bi bi-info-circle me-2"></i>关于自动预约
+                        </div>
+                        <div class="card-body">
+                            <p>自动预约任务会在您设定的时间自动为您执行茅台酒的预约操作。</p>
+                            <ul>
+                                <li>系统会在您设置的时间前后5分钟内执行预约</li>
+                                <li>每个商品每天只会执行一次预约</li>
+                                <li>预约结果可在"我的预约"页面查看</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="mt-3">
+                    <a href="{{ url_for('home') }}" class="btn btn-outline-secondary">返回首页</a>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <footer class="bg-light py-4 mt-5">
+        <div class="container text-center">
+            <p class="mb-0">&copy; 2025 iMaoTai - 茅台预约工具</p>
+        </div>
+    </footer>
+    
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html> 
