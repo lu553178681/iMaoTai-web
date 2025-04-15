@@ -118,15 +118,7 @@
             });
         });
         
-        // 表单提交验证
-        document.querySelector('form').addEventListener('submit', function(event) {
-            const checkboxes = document.querySelectorAll('.item-checkbox:checked');
-            if(checkboxes.length < 1) {
-                event.preventDefault();
-                alert('请至少选择一个商品');
-            }
-            // 移除要求全选的验证，允许部分选择
-        });
+        // 移除表单提交验证，允许不选择任何商品提交
     </script>
 </body>
 </html> 

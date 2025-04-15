@@ -184,12 +184,12 @@ class TaskItemMapping(db.Model):
     task = db.relationship('TaskSetting', backref=db.backref('item_mappings', cascade='all, delete-orphan'), lazy=True)
 
 class ReservationForm(FlaskForm):
-    item_codes = MultipleCheckboxField('商品类型(可多选)', validators=[DataRequired(message="请至少选择一个商品，可多选但不必全选")], 
+    item_codes = MultipleCheckboxField('商品类型(可多选)', validators=[], 
                            choices=[(k, v['name']) for k, v in config.ITEM_CONFIG.items() if v['enabled']])
     submit = SubmitField('提交预约')
 
 class TaskSettingForm(FlaskForm):
-    item_codes = MultipleCheckboxField('商品类型(可多选)', validators=[DataRequired(message="请至少选择一个商品，可多选但不必全选")], 
+    item_codes = MultipleCheckboxField('商品类型(可多选)', validators=[], 
                            choices=[(k, v['name']) for k, v in config.ITEM_CONFIG.items() if v['enabled']])
     mt_account_id = SelectField('使用账号', validators=[DataRequired()], coerce=int)
     enabled = BooleanField('启用自动预约', default=True)
@@ -210,6 +210,11 @@ def create_reservation():
         # 获取所有选中的商品
         selected_item_codes = form.item_codes.data
         
+        # 如果没有选择任何商品，直接返回成功信息
+        if not selected_item_codes:
+            flash('您没有选择任何商品，预约已提交！', 'success')
+            return redirect(url_for('reservations'))
+            
         # 为每个选择的商品创建预约
         for item_code in selected_item_codes:
             reservation = Reservation(
@@ -276,6 +281,11 @@ def create_task():
         # 获取所有选中的商品
         selected_item_codes = form.item_codes.data
         
+        # 如果没有选择任何商品，直接返回成功信息
+        if not selected_item_codes:
+            flash('您没有选择任何商品，任务已保存！', 'success')
+            return redirect(url_for('tasks'))
+            
         # 先查找是否有此账号的现有任务
         mt_account_id = form.mt_account_id.data
         existing_task = TaskSetting.query.filter_by(user_id=current_user.id, mt_account_id=mt_account_id).first()
@@ -301,7 +311,7 @@ def create_task():
             )
             db.session.add(task)
             db.session.flush()  # 获取task.id
-            
+        
         # 为每个选择的商品创建映射
         for item_code in selected_item_codes:
             item_mapping = TaskItemMapping(
