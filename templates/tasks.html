@@ -26,6 +26,14 @@
                     <li class="nav-item">
                         <a class="nav-link active" href="{{ url_for('tasks') }}">自动预约</a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('accounts') }}">茅台账号</a>
+                    </li>
+                    {% if current_user.username == 'admin' or current_user.id == 1 %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('system_config') }}">系统配置</a>
+                    </li>
+                    {% endif %}
                     {% endif %}
                 </ul>
                 <div class="navbar-nav">
@@ -79,10 +87,56 @@
                                 {% for task in tasks %}
                                 <tr>
                                     <td>
-                                        {% if task.item_code in config.ITEM_MAP %}
-                                            {{ config.ITEM_MAP[task.item_code] }}
+                                        {% set item_mappings = task.item_mappings %}
+                                        {% if item_mappings %}
+                                            <ul class="list-unstyled mb-0">
+                                                {% set mapping_count = item_mappings|length %}
+                                                {% set display_count = 3 %}
+                                                {% for mapping in item_mappings[:display_count] %}
+                                                    <li>
+                                                        {% if mapping.item_code in config.ITEM_CONFIG %}
+                                                            {{ config.ITEM_CONFIG[mapping.item_code]['name'] }}
+                                                        {% elif mapping.item_code in config.ITEM_MAP %}
+                                                            {{ config.ITEM_MAP[mapping.item_code] }}
+                                                        {% else %}
+                                                            {{ mapping.item_code }}
+                                                        {% endif %}
+                                                    </li>
+                                                {% endfor %}
+                                                
+                                                {% if mapping_count > display_count %}
+                                                    <li>
+                                                        <div class="dropdown">
+                                                            <a class="text-primary dropdown-toggle" href="#" role="button" id="moreProducts{{ task.id }}" data-bs-toggle="dropdown" aria-expanded="false">
+                                                                还有{{ mapping_count - display_count }}个商品
+                                                            </a>
+                                                            <ul class="dropdown-menu" aria-labelledby="moreProducts{{ task.id }}">
+                                                                {% for mapping in item_mappings[display_count:] %}
+                                                                    <li>
+                                                                        <span class="dropdown-item">
+                                                                            {% if mapping.item_code in config.ITEM_CONFIG %}
+                                                                                {{ config.ITEM_CONFIG[mapping.item_code]['name'] }}
+                                                                            {% elif mapping.item_code in config.ITEM_MAP %}
+                                                                                {{ config.ITEM_MAP[mapping.item_code] }}
+                                                                            {% else %}
+                                                                                {{ mapping.item_code }}
+                                                                            {% endif %}
+                                                                        </span>
+                                                                    </li>
+                                                                {% endfor %}
+                                                            </ul>
+                                                        </div>
+                                                    </li>
+                                                {% endif %}
+                                            </ul>
                                         {% else %}
-                                            {{ task.item_code }}
+                                            {% if task.item_code in config.ITEM_CONFIG %}
+                                                {{ config.ITEM_CONFIG[task.item_code]['name'] }}
+                                            {% elif task.item_code in config.ITEM_MAP %}
+                                                {{ config.ITEM_MAP[task.item_code] }}
+                                            {% else %}
+                                                {{ task.item_code }}
+                                            {% endif %}
                                         {% endif %}
                                     </td>
                                     <td>{{ task.preferred_time.strftime('%H:%M') }}</td>
@@ -101,7 +155,10 @@
                                     <td>{{ task.last_run.strftime('%Y-%m-%d %H:%M:%S') if task.last_run else "从未运行" }}</td>
                                     <td>
                                         <div class="btn-group" role="group">
-                                            <form method="POST" action="{{ url_for('toggle_task', task_id=task.id) }}" class="d-inline">
+                                            <a href="{{ url_for('edit_task', task_id=task.id) }}" class="btn btn-sm btn-info">
+                                                编辑
+                                            </a>
+                                            <form method="POST" action="{{ url_for('toggle_task', task_id=task.id) }}" class="d-inline ms-1">
                                                 <button type="submit" class="btn btn-sm {% if task.enabled %}btn-warning{% else %}btn-success{% endif %}">
                                                     {{ '禁用' if task.enabled else '启用' }}
                                                 </button>

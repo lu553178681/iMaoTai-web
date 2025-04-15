@@ -30,9 +30,6 @@
                         <a class="nav-link" href="{{ url_for('reservations') }}">我的预约</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('create_reservation') }}">新建预约</a>
-                    </li>
-                    <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('tasks') }}">自动预约</a>
                     </li>
                     <li class="nav-item">
@@ -131,7 +128,8 @@
                         <table class="table table-hover mb-0">
                             <thead>
                                 <tr>
-                                    <th>商品</th>
+                                    <th>商品名称</th>
+                                    <th>使用账号</th>
                                     <th>状态</th>
                                     <th>预约时间</th>
                                 </tr>
@@ -140,14 +138,19 @@
                                 {% for reservation in recent_reservations %}
                                 <tr>
                                     <td>
-                                        {% if reservation.item_code == "10941" %}
-                                            飞天53%500ml
-                                        {% elif reservation.item_code == "10942" %}
-                                            飞天43%500ml
-                                        {% elif reservation.item_code == "10056" %}
-                                            贵州茅台酒（黑金）53%500ml
+                                        {% if reservation.item_code in config.ITEM_CONFIG %}
+                                            {{ config.ITEM_CONFIG[reservation.item_code]['name'] }}
+                                        {% elif reservation.item_code in config.ITEM_MAP %}
+                                            {{ config.ITEM_MAP[reservation.item_code] }}
                                         {% else %}
-                                            未知商品
+                                            {{ reservation.item_code }}
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if reservation.mt_account %}
+                                            {{ reservation.mt_account.hidemobile }}
+                                        {% else %}
+                                            未知账号
                                         {% endif %}
                                     </td>
                                     <td>
@@ -199,16 +202,7 @@
         </div>
 
         <div class="row mt-5">
-            <div class="col-md-4">
-                <div class="card mb-4">
-                    <div class="card-body">
-                        <h5 class="card-title">快捷预约</h5>
-                        <p class="card-text">一键完成茅台预约流程，方便快捷。</p>
-                        <a href="{{ url_for('create_reservation') }}" class="btn btn-sm btn-primary">立即预约</a>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-4">
+            <div class="col-md-6">
                 <div class="card mb-4">
                     <div class="card-body">
                         <h5 class="card-title">自动预约</h5>
@@ -217,24 +211,12 @@
                     </div>
                 </div>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-6">
                 <div class="card mb-4">
                     <div class="card-body">
                         <h5 class="card-title">预约记录</h5>
                         <p class="card-text">查看历史预约记录及状态。</p>
                         <a href="{{ url_for('reservations') }}" class="btn btn-sm btn-primary">查看记录</a>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="row mt-5">
-            <div class="col-md-4">
-                <div class="card h-100">
-                    <div class="card-body">
-                        <h5 class="card-title">茅台账号</h5>
-                        <p class="card-text">管理您的茅台App账号信息，添加或编辑账号</p>
-                        <a href="{{ url_for('accounts') }}" class="btn btn-primary">管理账号</a>
                     </div>
                 </div>
             </div>

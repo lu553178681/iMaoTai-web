@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>我的预约 - iMaoTai</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
 </head>
 <body>
     <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
@@ -23,14 +24,16 @@
                         <a class="nav-link active" href="{{ url_for('reservations') }}">我的预约</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('create_reservation') }}">新建预约</a>
-                    </li>
-                    <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('tasks') }}">自动预约</a>
                     </li>
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('accounts') }}">茅台账号</a>
                     </li>
+                    {% if current_user.username == 'admin' or current_user.id == 1 %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('system_config') }}">系统配置</a>
+                    </li>
+                    {% endif %}
                     {% endif %}
                 </ul>
                 <div class="navbar-nav">
@@ -51,8 +54,15 @@
         <div class="row">
             <div class="col-md-10 offset-md-1">
                 <div class="d-flex justify-content-between align-items-center mb-4">
-                    <h1>我的预约</h1>
-                    <a href="{{ url_for('create_reservation') }}" class="btn btn-primary">创建新预约</a>
+                    <h2>我的预约记录</h2>
+                    <div>
+                        <a href="{{ url_for('tasks') }}" class="btn btn-primary">设置自动预约</a>
+                        {% if current_user.username == 'admin' or current_user.id == 1 %}
+                        <button type="button" class="btn btn-danger ms-2" data-bs-toggle="modal" data-bs-target="#clearAllModal">
+                            <i class="bi bi-trash"></i> 清空预约记录
+                        </button>
+                        {% endif %}
+                    </div>
                 </div>
                 
                 {% with messages = get_flashed_messages(with_categories=true) %}
@@ -66,6 +76,21 @@
                     {% endif %}
                 {% endwith %}
                 
+                <!-- 每页显示数量选择器 -->
+                <div class="mb-3 d-flex justify-content-end">
+                    <div class="dropdown">
+                        <button class="btn btn-outline-secondary dropdown-toggle" type="button" id="perPageDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                            每页显示: {{ per_page }}条
+                        </button>
+                        <ul class="dropdown-menu" aria-labelledby="perPageDropdown">
+                            <li><a class="dropdown-item {% if per_page == 10 %}active{% endif %}" href="{{ url_for('reservations', per_page=10, page=1) }}">10条</a></li>
+                            <li><a class="dropdown-item {% if per_page == 20 %}active{% endif %}" href="{{ url_for('reservations', per_page=20, page=1) }}">20条</a></li>
+                            <li><a class="dropdown-item {% if per_page == 50 %}active{% endif %}" href="{{ url_for('reservations', per_page=50, page=1) }}">50条</a></li>
+                            <li><a class="dropdown-item {% if per_page == 100 %}active{% endif %}" href="{{ url_for('reservations', per_page=100, page=1) }}">100条</a></li>
+                        </ul>
+                    </div>
+                </div>
+                
                 <div class="card">
                     <div class="card-body">
                         {% if reservations %}
@@ -75,27 +100,24 @@
                                     <th>商品代码</th>
                                     <th>商品名称</th>
                                     <th>状态</th>
-                                    <th>创建时间</th>
+                                    <th>茅台账号</th>
                                     <th>预约时间</th>
+                                    {% if current_user.username == 'admin' or current_user.id == 1 %}
+                                    <th width="100">操作</th>
+                                    {% endif %}
                                 </tr>
                             </thead>
                             <tbody>
                                 {% for reservation in reservations %}
                                 <tr>
                                     <td>
-                                        {% if reservation.item_code in config.ITEM_MAP %}
-                                            {{ config.ITEM_MAP[reservation.item_code] }}
-                                        {% else %}
-                                            {{ reservation.item_code }}
-                                        {% endif %}
+                                        {{ reservation.item_code }}
                                     </td>
                                     <td>
-                                        {% if reservation.item_code == "10941" %}
-                                            飞天53%500ml
-                                        {% elif reservation.item_code == "10942" %}
-                                            飞天43%500ml
-                                        {% elif reservation.item_code == "10056" %}
-                                            贵州茅台酒（黑金）53%500ml
+                                        {% if reservation.item_code in config.ITEM_CONFIG %}
+                                            {{ config.ITEM_CONFIG[reservation.item_code]['name'] }}
+                                        {% elif reservation.item_code in config.ITEM_MAP %}
+                                            {{ config.ITEM_MAP[reservation.item_code] }}
                                         {% else %}
                                             未知商品
                                         {% endif %}
@@ -105,12 +127,89 @@
                                             {{ reservation.status }}
                                         </span>
                                     </td>
-                                    <td>{{ reservation.create_time.strftime('%Y-%m-%d %H:%M:%S') if reservation.create_time else "未知" }}</td>
+                                    <td>
+                                        {% if reservation.mt_account %}
+                                            {{ reservation.mt_account.hidemobile }}
+                                        {% else %}
+                                            未知账号
+                                        {% endif %}
+                                    </td>
                                     <td>{{ reservation.reserve_time.strftime('%Y-%m-%d %H:%M:%S') if reservation.reserve_time else "未预约" }}</td>
+                                    {% if current_user.username == 'admin' or current_user.id == 1 %}
+                                    <td>
+                                        <button type="button" class="btn btn-sm btn-danger" data-bs-toggle="modal" data-bs-target="#deleteModal{{ reservation.id }}">
+                                            <i class="bi bi-trash"></i> 删除
+                                        </button>
+                                        
+                                        <!-- 删除确认框 -->
+                                        <div class="modal fade" id="deleteModal{{ reservation.id }}" tabindex="-1" aria-labelledby="deleteModalLabel" aria-hidden="true">
+                                            <div class="modal-dialog">
+                                                <div class="modal-content">
+                                                    <div class="modal-header">
+                                                        <h5 class="modal-title" id="deleteModalLabel">确认删除</h5>
+                                                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                                    </div>
+                                                    <div class="modal-body">
+                                                        确定要删除这条预约记录吗？此操作不可恢复。
+                                                    </div>
+                                                    <div class="modal-footer">
+                                                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                                                        <form action="{{ url_for('delete_reservation', reservation_id=reservation.id) }}" method="POST">
+                                                            <button type="submit" class="btn btn-danger">确认删除</button>
+                                                        </form>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </td>
+                                    {% endif %}
                                 </tr>
                                 {% endfor %}
                             </tbody>
                         </table>
+                        
+                        <!-- 分页控件 -->
+                        {% if pagination.pages > 1 %}
+                        <nav aria-label="预约记录分页">
+                            <ul class="pagination justify-content-center mt-4">
+                                <!-- 首页 -->
+                                <li class="page-item {% if pagination.page == 1 %}disabled{% endif %}">
+                                    <a class="page-link" href="{{ url_for('reservations', page=1, per_page=per_page) }}" tabindex="-1" aria-disabled="true">首页</a>
+                                </li>
+                                
+                                <!-- 上一页 -->
+                                <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+                                    <a class="page-link" href="{{ url_for('reservations', page=pagination.prev_num, per_page=per_page) if pagination.has_prev else '#' }}" tabindex="-1" aria-disabled="true">上一页</a>
+                                </li>
+                                
+                                <!-- 页码 -->
+                                {% for page_num in pagination.iter_pages(left_edge=1, left_current=2, right_current=2, right_edge=1) %}
+                                    {% if page_num %}
+                                        <li class="page-item {% if page_num == pagination.page %}active{% endif %}">
+                                            <a class="page-link" href="{{ url_for('reservations', page=page_num, per_page=per_page) }}">{{ page_num }}</a>
+                                        </li>
+                                    {% else %}
+                                        <li class="page-item disabled">
+                                            <span class="page-link">...</span>
+                                        </li>
+                                    {% endif %}
+                                {% endfor %}
+                                
+                                <!-- 下一页 -->
+                                <li class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+                                    <a class="page-link" href="{{ url_for('reservations', page=pagination.next_num, per_page=per_page) if pagination.has_next else '#' }}">下一页</a>
+                                </li>
+                                
+                                <!-- 末页 -->
+                                <li class="page-item {% if pagination.page == pagination.pages %}disabled{% endif %}">
+                                    <a class="page-link" href="{{ url_for('reservations', page=pagination.pages, per_page=per_page) }}">末页</a>
+                                </li>
+                            </ul>
+                        </nav>
+                        <div class="text-center">
+                            <small class="text-muted">共 {{ pagination.total }} 条记录，{{ pagination.pages }} 页</small>
+                        </div>
+                        {% endif %}
                         {% else %}
                         <div class="text-center py-4">
                             <p class="text-muted">您还没有预约记录</p>
@@ -125,6 +224,32 @@
             </div>
         </div>
     </div>
+    
+    <!-- 清空所有记录确认框 -->
+    {% if current_user.username == 'admin' or current_user.id == 1 %}
+    <div class="modal fade" id="clearAllModal" tabindex="-1" aria-labelledby="clearAllModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="clearAllModalLabel">确认清空所有预约记录</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-danger">
+                        <i class="bi bi-exclamation-triangle-fill me-2"></i>警告：此操作将删除系统中的所有预约记录，且无法恢复！
+                    </div>
+                    <p>请确认您要执行此操作。</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <form action="{{ url_for('clear_all_reservations') }}" method="POST">
+                        <button type="submit" class="btn btn-danger">确认清空</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
     
     <footer class="bg-light py-4 mt-5">
         <div class="container text-center">

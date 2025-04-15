@@ -24,14 +24,16 @@
                         <a class="nav-link" href="{{ url_for('reservations') }}">我的预约</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('create_reservation') }}">新建预约</a>
-                    </li>
-                    <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('tasks') }}">自动预约</a>
                     </li>
                     <li class="nav-item">
                         <a class="nav-link active" href="{{ url_for('accounts') }}">茅台账号</a>
                     </li>
+                    {% if current_user.username == 'admin' or current_user.id == 1 %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('system_config') }}">系统配置</a>
+                    </li>
+                    {% endif %}
                     {% endif %}
                 </ul>
                 <div class="navbar-nav">

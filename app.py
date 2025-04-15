@@ -75,7 +75,9 @@ def home():
         success_count = Reservation.query.filter_by(user_id=current_user.id, status='成功').count()
         
         # 最近的5条预约记录
-        recent_reservations = Reservation.query.filter_by(user_id=current_user.id).order_by(Reservation.create_time.desc()).limit(5).all()
+        recent_reservations = Reservation.query.filter_by(user_id=current_user.id).order_by(
+            Reservation.create_time.desc()
+        ).limit(5).all()
         
         return render_template('home.html', 
                              account_count=account_count,
@@ -149,7 +151,11 @@ class Reservation(db.Model):
     status = db.Column(db.String(20), nullable=False)
     create_time = db.Column(db.DateTime, default=datetime.datetime.now)
     reserve_time = db.Column(db.DateTime, nullable=True)
+    mt_account_id = db.Column(db.Integer, db.ForeignKey('maotai_account.id'), nullable=True)
     
+    # 关联茅台账号
+    mt_account = db.relationship('MaotaiAccount', backref='reservations', lazy=True)
+
 class TaskSetting(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
@@ -186,115 +192,81 @@ class TaskSettingForm(FlaskForm):
 @app.route('/reservations')
 @login_required
 def reservations():
-    user_reservations = Reservation.query.filter_by(user_id=current_user.id).all()
-    return render_template('reservations.html', reservations=user_reservations)
+    # 获取分页参数
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 10, type=int)
+    
+    # 限制每页显示数量的选项
+    if per_page not in [10, 20, 50, 100]:
+        per_page = 10
+    
+    # 查询预约记录并分页
+    pagination = Reservation.query.filter_by(user_id=current_user.id).join(
+        MaotaiAccount, Reservation.mt_account_id == MaotaiAccount.id, isouter=True
+    ).order_by(
+        Reservation.create_time.desc()
+    ).paginate(page=page, per_page=per_page, error_out=False)
+    
+    user_reservations = pagination.items
+    
+    return render_template('reservations.html', 
+                        reservations=user_reservations, 
+                        pagination=pagination,
+                        per_page=per_page)
 
 @app.route('/create_reservation', methods=['GET', 'POST'])
 @login_required
 def create_reservation():
-    form = ReservationForm()
+    # 重定向到任务页面，移除预约创建界面
+    flash('直接预约功能已被禁用，请使用自动预约功能', 'info')
+    return redirect(url_for('tasks'))
     
-    # 获取商品列表并设置为表单字段的选项
-    try:
-        # 使用CommodityFetcher类直接获取商品列表
-        fetcher = CommodityFetcher()
-        products = fetcher.fetch_commodities()
-        
-        if products:
-            # 存储sessionId到会话中，后续获取店铺列表时使用
-            session['mt_session_id'] = fetcher.session_id
-            
-            # 设置表单字段的选项
-            choices = []
-            for product in products:
-                item_id = product['Code']
-                title = product['Title']
-                choices.append((item_id, title))
-            
-            # 更新表单字段的选项
-            form.item_codes.choices = choices
-    except Exception as e:
-        # 出错时不阻止页面加载，页面会通过JS获取商品列表
-        print(f"预加载商品列表出错: {str(e)}")
-    
-    if form.validate_on_submit():
-        # 获取所有选中的商品
-        selected_item_codes = request.form.getlist('item_codes')
-        
-        # 如果没有选择任何商品，直接返回成功信息
-        if not selected_item_codes:
-            flash('您没有选择任何商品，预约已提交！', 'success')
-            return redirect(url_for('reservations'))
-            
-        # 为每个选择的商品创建预约
-        for item_code in selected_item_codes:
-            reservation = Reservation(
-                user_id=current_user.id,
-                item_code=item_code,
-                status='待处理'
-            )
-            db.session.add(reservation)
-        
-        db.session.commit()
-        
-        # 构建消息推送内容
-        item_names = []
-        
-        # 获取商品信息
-        try:
-            result = process.get_product_list()
-            if result['success']:
-                items_dict = {item['itemId']: item['title'] for item in result['items']}
-                
-                for item_code in selected_item_codes:
-                    if item_code in items_dict:
-                        item_names.append(items_dict[item_code])
-                    elif item_code in config.ITEM_CONFIG:
-                        item_names.append(config.ITEM_CONFIG[item_code]['name'])
-                    elif item_code in config.ITEM_MAP:
-                        item_names.append(config.ITEM_MAP[item_code])
-                    else:
-                        item_names.append(item_code)
-            else:
-                # 如果无法获取商品详情，则使用配置或简单ID
-                for item_code in selected_item_codes:
-                    if item_code in config.ITEM_CONFIG:
-                        item_names.append(config.ITEM_CONFIG[item_code]['name'])
-                    elif item_code in config.ITEM_MAP:
-                        item_names.append(config.ITEM_MAP[item_code])
-                    else:
-                        item_names.append(item_code)
-        except Exception:
-            # 发生错误时使用简单商品ID
-            for item_code in selected_item_codes:
-                if item_code in config.ITEM_CONFIG:
-                    item_names.append(config.ITEM_CONFIG[item_code]['name'])
-                elif item_code in config.ITEM_MAP:
-                    item_names.append(config.ITEM_MAP[item_code])
-                else:
-                    item_names.append(item_code)
-                
-        formatted_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        message_content = f"""
-用户: {current_user.username}
-提交时间: {formatted_time}
-提交商品:
-{chr(10).join(['- ' + name for name in item_names])}
-状态: 待处理
-        """
-        
-        # 发送消息推送
-        push_success = False
-        if config.PUSH_TOKEN:
-            push_success = send_message.send_pushplus(config.PUSH_TOKEN, "【提交】茅台预约申请", message_content)
-        if not push_success and config.DINGTALK_WEBHOOK:
-            send_message.send_webhook(config.DINGTALK_WEBHOOK, "【提交】茅台预约申请", message_content)
-        if config.SCKEY:
-            send_message.send_server_chan(config.SCKEY, "【提交】茅台预约申请", message_content)
-        
-        flash(f'已成功提交 {len(selected_item_codes)} 个商品的预约!', 'success')
+    # 原代码被移除，保留路由功能，但不再显示预约创建界面
+
+@app.route('/delete_reservation/<int:reservation_id>', methods=['POST'])
+@login_required
+def delete_reservation(reservation_id):
+    # 只允许管理员删除预约记录
+    if current_user.username != 'admin' and current_user.id != 1:
+        flash('您没有权限执行此操作！', 'danger')
         return redirect(url_for('reservations'))
-    return render_template('create_reservation.html', form=form)
+    
+    reservation = Reservation.query.get_or_404(reservation_id)
+    
+    # 保存一些信息用于提示
+    item_code = reservation.item_code
+    item_name = ""
+    if item_code in config.ITEM_CONFIG:
+        item_name = config.ITEM_CONFIG[item_code]['name']
+    elif item_code in config.ITEM_MAP:
+        item_name = config.ITEM_MAP[item_code]
+    else:
+        item_name = item_code
+    
+    # 删除预约记录
+    db.session.delete(reservation)
+    db.session.commit()
+    
+    flash(f'已成功删除预约记录：{item_name}', 'success')
+    return redirect(url_for('reservations'))
+
+@app.route('/clear_all_reservations', methods=['POST'])
+@login_required
+def clear_all_reservations():
+    # 只允许管理员清空预约记录
+    if current_user.username != 'admin' and current_user.id != 1:
+        flash('您没有权限执行此操作！', 'danger')
+        return redirect(url_for('reservations'))
+    
+    # 获取当前系统中的所有预约记录数量
+    reservation_count = Reservation.query.count()
+    
+    # 删除所有预约记录
+    Reservation.query.delete()
+    db.session.commit()
+    
+    flash(f'已成功清空所有预约记录，共删除 {reservation_count} 条记录', 'success')
+    return redirect(url_for('reservations'))
 
 @app.route('/tasks')
 @login_required
@@ -347,31 +319,16 @@ def create_task():
             flash('您没有选择任何商品，任务已保存！', 'success')
             return redirect(url_for('tasks'))
             
-        # 先查找是否有此账号的现有任务
-        mt_account_id = form.mt_account_id.data
-        existing_task = TaskSetting.query.filter_by(user_id=current_user.id, mt_account_id=mt_account_id).first()
-        
-        if existing_task:
-            # 如果有现有任务，则更新它
-            existing_task.enabled = form.enabled.data
-            existing_task.preferred_time = form.preferred_time.data
-            existing_task.item_code = selected_item_codes[0] if selected_item_codes else ''  # 兼容旧版
-            
-            # 删除旧的商品映射
-            TaskItemMapping.query.filter_by(task_id=existing_task.id).delete()
-            
-            task = existing_task
-        else:
-            # 创建新任务
-            task = TaskSetting(
-                user_id=current_user.id,
-                item_code=selected_item_codes[0] if selected_item_codes else '',  # 兼容旧版
-                mt_account_id=mt_account_id,
-                enabled=form.enabled.data,
-                preferred_time=form.preferred_time.data
-            )
-            db.session.add(task)
-            db.session.flush()  # 获取task.id
+        # 创建新任务
+        task = TaskSetting(
+            user_id=current_user.id,
+            item_code=selected_item_codes[0] if selected_item_codes else '',  # 兼容旧版
+            mt_account_id=form.mt_account_id.data,
+            enabled=form.enabled.data,
+            preferred_time=form.preferred_time.data
+        )
+        db.session.add(task)
+        db.session.flush()  # 获取task.id
         
         # 为每个选择的商品创建映射
         for item_code in selected_item_codes:
@@ -384,7 +341,7 @@ def create_task():
         db.session.commit()
         
         # 构建消息推送内容
-        account = MaotaiAccount.query.get(mt_account_id)
+        account = MaotaiAccount.query.get(form.mt_account_id.data)
         account_info = f"{account.hidemobile} ({account.province}, {account.city})" if account else "未知账号"
         
         item_names = []
@@ -426,7 +383,7 @@ def create_task():
         formatted_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         task_status = "已启用" if form.enabled.data else "已禁用"
         preferred_time = form.preferred_time.data.strftime('%H:%M')
-        action_type = "更新" if existing_task else "创建"
+        action_type = "更新" if task.id > 0 else "创建"
         
         message_content = f"""
 用户: {current_user.username}
@@ -491,11 +448,194 @@ def run_task(task_id):
     success, message = real_reservation(task)
     
     if success:
-        flash('预约执行成功!', 'success')
+        flash('所有商品预约成功!', 'success')
     else:
-        flash(f'预约执行失败: {message}', 'danger')
+        # 获取此任务的所有商品
+        item_codes = []
+        item_mappings = TaskItemMapping.query.filter_by(task_id=task.id).all()
+        if item_mappings:
+            item_codes = [mapping.item_code for mapping in item_mappings]
+        else:
+            item_codes = [task.item_code]
+            
+        # 获取刚刚预约的结果
+        results = []
+        success_count = 0
+        total_count = len(item_codes)
+        
+        for item_code in item_codes:
+            # 查找最近的预约记录
+            reservation = Reservation.query.filter_by(
+                user_id=current_user.id,
+                item_code=item_code
+            ).order_by(Reservation.create_time.desc()).first()
+            
+            if reservation and reservation.create_time >= datetime.datetime.now() - datetime.timedelta(minutes=5):
+                item_name = item_code
+                if item_code in config.ITEM_CONFIG:
+                    item_name = config.ITEM_CONFIG[item_code]['name']
+                elif item_code in config.ITEM_MAP:
+                    item_name = config.ITEM_MAP[item_code]
+                
+                status = reservation.status
+                if status == '成功':
+                    success_count += 1
+                    
+                results.append(f"{item_name}: {status}")
+        
+        # 生成预约结果消息
+        if success_count == 0:
+            status_prefix = "预约失败"
+        elif success_count < total_count:
+            status_prefix = "部分商品预约成功"
+        else:
+            status_prefix = "所有商品预约成功"
+            
+        flash(f'{status_prefix}! 预约结果: {", ".join(results)}', 'warning' if success_count < total_count else 'success')
     
     return redirect(url_for('tasks'))
+
+@app.route('/edit_task/<int:task_id>', methods=['GET', 'POST'])
+@login_required
+def edit_task(task_id):
+    # 查询并验证任务
+    task = TaskSetting.query.get_or_404(task_id)
+    if task.user_id != current_user.id:
+        flash('您无权编辑此任务!', 'danger')
+        return redirect(url_for('tasks'))
+    
+    # 初始化表单
+    form = TaskSettingForm(obj=task)
+    
+    # 动态获取当前用户的茅台账号列表
+    user_accounts = MaotaiAccount.query.filter_by(user_id=current_user.id, is_active=True).all()
+    form.mt_account_id.choices = [(account.id, f"{account.hidemobile} ({account.province}, {account.city})") for account in user_accounts]
+    
+    # 获取此任务已选择的商品
+    selected_items = [mapping.item_code for mapping in TaskItemMapping.query.filter_by(task_id=task.id).all()]
+    
+    # 获取商品列表并设置为表单字段的选项
+    try:
+        # 使用CommodityFetcher类直接获取商品列表
+        fetcher = CommodityFetcher()
+        products = fetcher.fetch_commodities()
+        
+        if products:
+            # 存储sessionId到会话中，后续获取店铺列表时使用
+            session['mt_session_id'] = fetcher.session_id
+            
+            # 设置表单字段的选项
+            choices = []
+            for product in products:
+                item_id = product['Code']
+                title = product['Title']
+                choices.append((item_id, title))
+            
+            # 更新表单字段的选项
+            form.item_codes.choices = choices
+    except Exception as e:
+        # 出错时不阻止页面加载，页面会通过JS获取商品列表
+        print(f"预加载商品列表出错: {str(e)}")
+    
+    if form.validate_on_submit():
+        # 获取所有选中的商品
+        selected_item_codes = request.form.getlist('item_codes')
+        
+        # 如果没有选择任何商品，直接返回成功信息
+        if not selected_item_codes:
+            flash('您没有选择任何商品，任务已保存！', 'success')
+            return redirect(url_for('tasks'))
+        
+        # 更新任务信息
+        task.mt_account_id = form.mt_account_id.data
+        task.enabled = form.enabled.data
+        task.preferred_time = form.preferred_time.data
+        task.item_code = selected_item_codes[0] if selected_item_codes else ''  # 兼容旧版
+        
+        # 删除旧的商品映射
+        TaskItemMapping.query.filter_by(task_id=task.id).delete()
+        
+        # 为每个选择的商品创建映射
+        for item_code in selected_item_codes:
+            item_mapping = TaskItemMapping(
+                task_id=task.id,
+                item_code=item_code
+            )
+            db.session.add(item_mapping)
+        
+        db.session.commit()
+        
+        # 构建消息推送内容
+        account = MaotaiAccount.query.get(form.mt_account_id.data)
+        account_info = f"{account.hidemobile} ({account.province}, {account.city})" if account else "未知账号"
+        
+        item_names = []
+        
+        # 获取商品信息
+        try:
+            result = process.get_product_list()
+            if result['success']:
+                items_dict = {item['itemId']: item['title'] for item in result['items']}
+                
+                for item_code in selected_item_codes:
+                    if item_code in items_dict:
+                        item_names.append(items_dict[item_code])
+                    elif item_code in config.ITEM_CONFIG:
+                        item_names.append(config.ITEM_CONFIG[item_code]['name'])
+                    elif item_code in config.ITEM_MAP:
+                        item_names.append(config.ITEM_MAP[item_code])
+                    else:
+                        item_names.append(item_code)
+            else:
+                # 如果无法获取商品详情，则使用配置或简单ID
+                for item_code in selected_item_codes:
+                    if item_code in config.ITEM_CONFIG:
+                        item_names.append(config.ITEM_CONFIG[item_code]['name'])
+                    elif item_code in config.ITEM_MAP:
+                        item_names.append(config.ITEM_MAP[item_code])
+                    else:
+                        item_names.append(item_code)
+        except Exception:
+            # 发生错误时使用简单商品ID
+            for item_code in selected_item_codes:
+                if item_code in config.ITEM_CONFIG:
+                    item_names.append(config.ITEM_CONFIG[item_code]['name'])
+                elif item_code in config.ITEM_MAP:
+                    item_names.append(config.ITEM_MAP[item_code])
+                else:
+                    item_names.append(item_code)
+                
+        formatted_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        task_status = "已启用" if form.enabled.data else "已禁用"
+        preferred_time = form.preferred_time.data.strftime('%H:%M')
+        
+        message_content = f"""
+用户: {current_user.username}
+更新时间: {formatted_time}
+使用账号: {account_info}
+预约时间: {preferred_time}
+状态: {task_status}
+商品列表:
+{chr(10).join(['- ' + name for name in item_names])}
+        """
+        
+        # 发送消息推送
+        push_success = False
+        if config.PUSH_TOKEN:
+            push_success = send_message.send_pushplus(config.PUSH_TOKEN, f"【更新】茅台自动预约任务", message_content)
+        if not push_success and config.DINGTALK_WEBHOOK:
+            send_message.send_webhook(config.DINGTALK_WEBHOOK, f"【更新】茅台自动预约任务", message_content)
+        if config.SCKEY:
+            send_message.send_server_chan(config.SCKEY, f"【更新】茅台自动预约任务", message_content)
+        
+        flash(f'已更新 {len(selected_item_codes)} 个商品的自动预约任务!', 'success')
+        return redirect(url_for('tasks'))
+    
+    # 设置表单初始值
+    if selected_items:
+        form.item_codes.data = selected_items
+    
+    return render_template('edit_task.html', form=form, task=task)
 
 def real_reservation(task):
     """实际预约过程，使用茅台账号信息调用预约API"""
@@ -552,7 +692,8 @@ def real_reservation(task):
                 user_id=task.user_id,
                 item_code=item_code,
                 status=status,
-                reserve_time=datetime.datetime.now()
+                reserve_time=datetime.datetime.now(),
+                mt_account_id=task.mt_account_id
             )
             
             db.session.add(reservation)
@@ -583,7 +724,7 @@ def real_reservation(task):
 预约时间: {formatted_time}
 账号: {mobile[:3]}****{mobile[-4:]}
 商品结果:
-{chr(10).join(['- ' + r for r in results])}
+{chr(10).join(results)}
         """
         
         # 发送消息推送
@@ -612,37 +753,64 @@ def real_reservation(task):
 # 修改任务后台线程
 def background_task_runner():
     """后台线程，自动执行预约任务"""
-    with app.app_context():
-        while True:
-            try:
-                now = datetime.datetime.now()
-                current_time = now.time()
-                
-                # 获取所有启用的任务
-                enabled_tasks = TaskSetting.query.filter_by(enabled=True).all()
-                
-                for task in enabled_tasks:
-                    # 检查账号是否可用
-                    if not task.mt_account or not task.mt_account.is_active:
-                        continue
+    print(f"\n\n[{datetime.datetime.now()}] ====== 后台任务线程已启动 ======\n\n")
+    try:
+        with app.app_context():
+            while True:
+                try:
+                    now = datetime.datetime.now()
+                    current_time = now.time()
                     
-                    # 检查是否在预约时间窗口内（前后5分钟）
-                    task_time = task.preferred_time
-                    time_diff = (datetime.datetime.combine(datetime.date.today(), current_time) - 
-                                datetime.datetime.combine(datetime.date.today(), task_time))
-                    minutes_diff = abs(time_diff.total_seconds() / 60)
+                    # 获取所有启用的任务
+                    enabled_tasks = TaskSetting.query.filter_by(enabled=True).all()
+                    if enabled_tasks:
+                        print(f"[{now}] 当前时间: {current_time}, 检测到 {len(enabled_tasks)} 个启用的任务")
                     
-                    # 如果在时间窗口内且今天还没有运行过
-                    if minutes_diff <= 5:
+                    for task in enabled_tasks:
+                        # 检查账号是否可用
+                        if not task.mt_account or not task.mt_account.is_active:
+                            continue
+                        
+                        # 获取任务设定时间
+                        task_time = task.preferred_time
+                        
+                        # 获取关联账号和商品信息用于日志
+                        account_info = f"{task.mt_account.hidemobile}" if task.mt_account else "未知账号"
+                        item_codes = [mapping.item_code for mapping in TaskItemMapping.query.filter_by(task_id=task.id).all()]
+                        if not item_codes:
+                            item_codes = [task.item_code]
+                        
                         # 检查今天是否已经运行过
-                        if task.last_run is None or task.last_run.date() < now.date():
-                            real_reservation(task)
-                
-                # 每分钟检查一次
-                time.sleep(60)
-            except Exception as e:
-                print(f"后台任务错误: {e}")
-                time.sleep(60)
+                        already_run_today = task.last_run is not None and task.last_run.date() == now.date()
+                        
+                        # 计算当前时间与任务时间的差距（分钟）
+                        current_minutes = current_time.hour * 60 + current_time.minute
+                        task_minutes = task_time.hour * 60 + task_time.minute
+                        minutes_diff = abs(current_minutes - task_minutes)
+                        
+                        # 对每个任务进行报告，便于排查
+                        print(f"[{now}] 任务ID={task.id}, 设定时间={task_time}, 当前分钟差={minutes_diff}, 今日已执行={already_run_today}")
+                        
+                        # 如果时间在1分钟内且今天还没有运行过
+                        if minutes_diff <= 1 and not already_run_today:
+                            print(f"\n[{now}] ===开始执行任务: ID={task.id}, 时间={task_time}, 账号={account_info}, 商品={item_codes}===\n")
+                            success, message = real_reservation(task)
+                            print(f"\n[{now}] ===任务执行结果: 成功={success}, 消息={message}===\n")
+                            # 更新数据库
+                            db.session.commit()
+                    
+                    # 每30秒检查一次任务
+                    time.sleep(30)
+                except Exception as e:
+                    print(f"[{datetime.datetime.now()}] 后台任务循环错误: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    # 错误后等待30秒再继续
+                    time.sleep(30)
+    except Exception as e:
+        print(f"[{datetime.datetime.now()}] 后台任务线程严重错误: {e}")
+        import traceback
+        traceback.print_exc()
 
 # 消息推送功能可以在预约成功后调用现有的推送服务
 # 例如：send_message.send_pushplus(config.PUSH_TOKEN, '预约成功', '您的预约已成功')
@@ -1402,8 +1570,14 @@ if __name__ == '__main__':
         db.create_all()
         init_demo_data()
     
-    # 启动后台任务线程
-    scheduler_thread = threading.Thread(target=background_task_runner, daemon=True)
-    scheduler_thread.start()
-    
-    app.run(debug=True) 
+    try:
+        # 启动后台任务线程
+        scheduler_thread = threading.Thread(target=background_task_runner, daemon=True)
+        scheduler_thread.start()
+        print(f"[{datetime.datetime.now()}] 后台任务线程已启动")
+        
+        app.run(debug=True, use_reloader=False)  # 禁用reloader避免线程重复启动
+    except Exception as e:
+        print(f"应用启动错误: {e}")
+        import traceback
+        traceback.print_exc() 
