@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session
 from flask_sqlalchemy import SQLAlchemy
 from flask_wtf import FlaskForm
 from wtforms import StringField, PasswordField, SubmitField, SelectField, BooleanField, TimeField, HiddenField, TextAreaField, SelectMultipleField, widgets
@@ -20,6 +20,7 @@ import process
 import send_message
 from dotenv import load_dotenv
 import requests
+from commodity_fetcher import CommodityFetcher
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your_secret_key'
@@ -59,18 +60,6 @@ class User(UserMixin, db.Model):
 @login_manager.user_loader
 def load_user(user_id):
     return User.query.get(int(user_id))
-
-class RegistrationForm(FlaskForm):
-    username = StringField('用户名', validators=[DataRequired(), Length(min=2, max=20)])
-    password = PasswordField('密码', validators=[DataRequired(), Length(min=6)])
-    confirm_password = PasswordField('确认密码', 
-                                   validators=[DataRequired(), EqualTo('password', message='两次输入的密码必须一致')])
-    submit = SubmitField('注册')
-    
-    def validate_username(self, username):
-        user = User.query.filter_by(username=username.data).first()
-        if user:
-            raise ValidationError('该用户名已被注册，请使用其他用户名')
 
 @app.route('/')
 def home():
@@ -184,13 +173,11 @@ class TaskItemMapping(db.Model):
     task = db.relationship('TaskSetting', backref=db.backref('item_mappings', cascade='all, delete-orphan'), lazy=True)
 
 class ReservationForm(FlaskForm):
-    item_codes = MultipleCheckboxField('商品类型(可多选)', validators=[], 
-                           choices=[(k, v['name']) for k, v in config.ITEM_CONFIG.items() if v['enabled']])
+    item_codes = MultipleCheckboxField('商品类型(可多选)', validators=[], choices=[])
     submit = SubmitField('提交预约')
 
 class TaskSettingForm(FlaskForm):
-    item_codes = MultipleCheckboxField('商品类型(可多选)', validators=[], 
-                           choices=[(k, v['name']) for k, v in config.ITEM_CONFIG.items() if v['enabled']])
+    item_codes = MultipleCheckboxField('商品类型(可多选)', validators=[], choices=[])
     mt_account_id = SelectField('使用账号', validators=[DataRequired()], coerce=int)
     enabled = BooleanField('启用自动预约', default=True)
     preferred_time = TimeField('首选预约时间', default=datetime.time(9, 0), validators=[DataRequired()])
@@ -206,9 +193,33 @@ def reservations():
 @login_required
 def create_reservation():
     form = ReservationForm()
+    
+    # 获取商品列表并设置为表单字段的选项
+    try:
+        # 使用CommodityFetcher类直接获取商品列表
+        fetcher = CommodityFetcher()
+        products = fetcher.fetch_commodities()
+        
+        if products:
+            # 存储sessionId到会话中，后续获取店铺列表时使用
+            session['mt_session_id'] = fetcher.session_id
+            
+            # 设置表单字段的选项
+            choices = []
+            for product in products:
+                item_id = product['Code']
+                title = product['Title']
+                choices.append((item_id, title))
+            
+            # 更新表单字段的选项
+            form.item_codes.choices = choices
+    except Exception as e:
+        # 出错时不阻止页面加载，页面会通过JS获取商品列表
+        print(f"预加载商品列表出错: {str(e)}")
+    
     if form.validate_on_submit():
         # 获取所有选中的商品
-        selected_item_codes = form.item_codes.data
+        selected_item_codes = request.form.getlist('item_codes')
         
         # 如果没有选择任何商品，直接返回成功信息
         if not selected_item_codes:
@@ -228,13 +239,40 @@ def create_reservation():
         
         # 构建消息推送内容
         item_names = []
-        for item_code in selected_item_codes:
-            if item_code in config.ITEM_CONFIG:
-                item_names.append(config.ITEM_CONFIG[item_code]['name'])
-            elif item_code in config.ITEM_MAP:
-                item_names.append(config.ITEM_MAP[item_code])
+        
+        # 获取商品信息
+        try:
+            result = process.get_product_list()
+            if result['success']:
+                items_dict = {item['itemId']: item['title'] for item in result['items']}
+                
+                for item_code in selected_item_codes:
+                    if item_code in items_dict:
+                        item_names.append(items_dict[item_code])
+                    elif item_code in config.ITEM_CONFIG:
+                        item_names.append(config.ITEM_CONFIG[item_code]['name'])
+                    elif item_code in config.ITEM_MAP:
+                        item_names.append(config.ITEM_MAP[item_code])
+                    else:
+                        item_names.append(item_code)
             else:
-                item_names.append(item_code)
+                # 如果无法获取商品详情，则使用配置或简单ID
+                for item_code in selected_item_codes:
+                    if item_code in config.ITEM_CONFIG:
+                        item_names.append(config.ITEM_CONFIG[item_code]['name'])
+                    elif item_code in config.ITEM_MAP:
+                        item_names.append(config.ITEM_MAP[item_code])
+                    else:
+                        item_names.append(item_code)
+        except Exception:
+            # 发生错误时使用简单商品ID
+            for item_code in selected_item_codes:
+                if item_code in config.ITEM_CONFIG:
+                    item_names.append(config.ITEM_CONFIG[item_code]['name'])
+                elif item_code in config.ITEM_MAP:
+                    item_names.append(config.ITEM_MAP[item_code])
+                else:
+                    item_names.append(item_code)
                 
         formatted_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         message_content = f"""
@@ -277,9 +315,32 @@ def create_task():
         flash('您需要先添加茅台账号才能创建自动预约任务！', 'warning')
         return redirect(url_for('accounts'))
     
+    # 获取商品列表并设置为表单字段的选项
+    try:
+        # 使用CommodityFetcher类直接获取商品列表
+        fetcher = CommodityFetcher()
+        products = fetcher.fetch_commodities()
+        
+        if products:
+            # 存储sessionId到会话中，后续获取店铺列表时使用
+            session['mt_session_id'] = fetcher.session_id
+            
+            # 设置表单字段的选项
+            choices = []
+            for product in products:
+                item_id = product['Code']
+                title = product['Title']
+                choices.append((item_id, title))
+            
+            # 更新表单字段的选项
+            form.item_codes.choices = choices
+    except Exception as e:
+        # 出错时不阻止页面加载，页面会通过JS获取商品列表
+        print(f"预加载商品列表出错: {str(e)}")
+    
     if form.validate_on_submit():
         # 获取所有选中的商品
-        selected_item_codes = form.item_codes.data
+        selected_item_codes = request.form.getlist('item_codes')
         
         # 如果没有选择任何商品，直接返回成功信息
         if not selected_item_codes:
@@ -327,13 +388,40 @@ def create_task():
         account_info = f"{account.hidemobile} ({account.province}, {account.city})" if account else "未知账号"
         
         item_names = []
-        for item_code in selected_item_codes:
-            if item_code in config.ITEM_CONFIG:
-                item_names.append(config.ITEM_CONFIG[item_code]['name'])
-            elif item_code in config.ITEM_MAP:
-                item_names.append(config.ITEM_MAP[item_code])
+        
+        # 获取商品信息
+        try:
+            result = process.get_product_list()
+            if result['success']:
+                items_dict = {item['itemId']: item['title'] for item in result['items']}
+                
+                for item_code in selected_item_codes:
+                    if item_code in items_dict:
+                        item_names.append(items_dict[item_code])
+                    elif item_code in config.ITEM_CONFIG:
+                        item_names.append(config.ITEM_CONFIG[item_code]['name'])
+                    elif item_code in config.ITEM_MAP:
+                        item_names.append(config.ITEM_MAP[item_code])
+                    else:
+                        item_names.append(item_code)
             else:
-                item_names.append(item_code)
+                # 如果无法获取商品详情，则使用配置或简单ID
+                for item_code in selected_item_codes:
+                    if item_code in config.ITEM_CONFIG:
+                        item_names.append(config.ITEM_CONFIG[item_code]['name'])
+                    elif item_code in config.ITEM_MAP:
+                        item_names.append(config.ITEM_MAP[item_code])
+                    else:
+                        item_names.append(item_code)
+        except Exception:
+            # 发生错误时使用简单商品ID
+            for item_code in selected_item_codes:
+                if item_code in config.ITEM_CONFIG:
+                    item_names.append(config.ITEM_CONFIG[item_code]['name'])
+                elif item_code in config.ITEM_MAP:
+                    item_names.append(config.ITEM_MAP[item_code])
+                else:
+                    item_names.append(item_code)
                 
         formatted_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         task_status = "已启用" if form.enabled.data else "已禁用"
@@ -1145,6 +1233,169 @@ def test_push():
         'success': success,
         'message': message
     })
+
+@app.route('/api/get_products', methods=['GET'])
+@login_required
+def get_products():
+    """获取可预约的商品列表API"""
+    try:
+        # 使用CommodityFetcher类直接获取商品列表
+        fetcher = CommodityFetcher()
+        products = fetcher.fetch_commodities()
+        
+        if products:
+            # 存储sessionId到会话中，后续获取店铺列表时使用
+            session['mt_session_id'] = fetcher.session_id
+            
+            # 转换为前端需要的格式
+            items = []
+            for product in products:
+                item = {
+                    'itemId': product['Code'],
+                    'itemCode': product['Code'],
+                    'title': product['Title'],
+                    'content': product['Description'],
+                    'price': product['Price']
+                }
+                items.append(item)
+            
+            return jsonify({
+                'success': True,
+                'items': items
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': '获取商品列表失败，返回了空列表'
+            })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'获取商品列表失败: {str(e)}'
+        })
+
+@app.route('/api/get_shops', methods=['GET'])
+@login_required
+def get_shops():
+    """获取指定商品的可预约店铺列表API"""
+    try:
+        # 初始化headers
+        process.init_headers()
+        
+        item_id = request.args.get('item_id')
+        if not item_id:
+            return jsonify({
+                'success': False,
+                'message': '缺少商品ID参数'
+            })
+            
+        # 获取会话ID
+        session_id = session.get('mt_session_id')
+        if not session_id:
+            # 如果没有会话ID，重新获取商品列表
+            product_result = process.get_product_list()
+            if not product_result['success']:
+                return jsonify({
+                    'success': False,
+                    'message': '获取会话ID失败'
+                })
+            session_id = product_result['session_id']
+            session['mt_session_id'] = session_id
+        
+        # 获取当前用户的茅台账号，用于确定省份
+        account = MaotaiAccount.query.filter_by(user_id=current_user.id, is_active=True).first()
+        if not account:
+            return jsonify({
+                'success': False,
+                'message': '请先添加茅台账号'
+            })
+            
+        # 获取指定省份的店铺列表
+        result = process.get_shop_list(session_id, account.province, item_id)
+        
+        if result['success']:
+            return jsonify({
+                'success': True,
+                'shops': result['shops']
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': result['message']
+            })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'获取店铺列表失败: {str(e)}'
+        })
+
+@app.route('/api/find_nearest_shop', methods=['POST'])
+@login_required
+def find_nearest_shop():
+    """查找最近的店铺API"""
+    try:
+        # 初始化headers
+        process.init_headers()
+        
+        data = request.json
+        item_id = data.get('item_id')
+        lat = data.get('lat')
+        lng = data.get('lng')
+        
+        if not item_id or not lat or not lng:
+            return jsonify({
+                'success': False,
+                'message': '缺少必要参数'
+            })
+        
+        # 获取会话ID
+        session_id = session.get('mt_session_id')
+        if not session_id:
+            # 如果没有会话ID，重新获取商品列表
+            product_result = process.get_product_list()
+            if not product_result['success']:
+                return jsonify({
+                    'success': False,
+                    'message': '获取会话ID失败'
+                })
+            session_id = product_result['session_id']
+            session['mt_session_id'] = session_id
+        
+        # 获取当前用户的茅台账号，用于确定省份
+        account = MaotaiAccount.query.filter_by(user_id=current_user.id, is_active=True).first()
+        if not account:
+            return jsonify({
+                'success': False,
+                'message': '请先添加茅台账号'
+            })
+            
+        # 获取指定省份的店铺列表
+        shop_result = process.get_shop_list(session_id, account.province, item_id)
+        
+        if not shop_result['success']:
+            return jsonify({
+                'success': False,
+                'message': shop_result['message']
+            })
+            
+        # 查找最近的店铺
+        shop_id = process.get_nearest_shop(shop_result['shops'], lat, lng)
+        
+        if shop_id:
+            return jsonify({
+                'success': True,
+                'shop_id': shop_id
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': '未找到合适的店铺'
+            })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'查找最近店铺失败: {str(e)}'
+        })
 
 if __name__ == '__main__':
     with app.app_context():

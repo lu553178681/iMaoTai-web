@@ -14,6 +14,7 @@ import requests
 import hashlib
 import logging
 import privateCrypt
+from urllib.parse import quote
 
 AES_KEY = 'qbhajinldepmucsonaaaccgypwuvcjaa'
 AES_IV = '2018534749963515'
@@ -351,3 +352,214 @@ def set_default_value(input_value, default_content):
     :return: 输入内容或默认内容
     """
     return default_content if input_value is None or input_value.strip() == "" else input_value
+
+def get_product_list(timestamp=None, max_retries=3, retry_delay=2):
+    """获取可预约商品列表
+    
+    Args:
+        timestamp: 时间戳，默认为当天0点的时间戳
+        max_retries: 最大重试次数
+        retry_delay: 重试间隔秒数
+        
+    Returns:
+        商品列表数据
+    """
+    # 使用CommodityFetcher类获取商品列表
+    from commodity_fetcher import CommodityFetcher
+    import logging
+    import random
+    import time
+    
+    # 添加重试机制
+    retry_count = 0
+    last_error = None
+    
+    while retry_count < max_retries:
+        try:
+            # 创建CommodityFetcher实例并获取商品列表
+            fetcher = CommodityFetcher()
+            products = fetcher.fetch_commodities()
+            
+            if products:
+                # 将商品列表转换为原接口格式
+                items = []
+                for product in products:
+                    item = {
+                        'itemId': product['Code'],
+                        'itemCode': product['Code'],
+                        'title': product['Title'],
+                        'content': product['Description'],
+                        'price': product['Price']
+                    }
+                    items.append(item)
+                
+                return {
+                    'success': True,
+                    'session_id': fetcher.session_id,
+                    'items': items
+                }
+            else:
+                return {
+                    'success': False,
+                    'message': '获取商品列表失败，返回了空列表'
+                }
+                
+        except Exception as e:
+            last_error = f"处理异常: {str(e)}"
+            logging.warning(f"获取商品列表失败 (尝试 {retry_count+1}/{max_retries}): {last_error}")
+        
+        # 增加重试延迟，并增加随机性避免同时重试
+        retry_delay_with_jitter = retry_delay + random.uniform(0, 1)
+        time.sleep(retry_delay_with_jitter)
+        retry_count += 1
+    
+    # 所有重试失败后，返回错误
+    return {
+        'success': False,
+        'message': f'获取商品列表失败，已重试{max_retries}次: {last_error}'
+    }
+
+def get_shop_list(session_id, province, item_id, timestamp=None, max_retries=3, retry_delay=2):
+    """获取指定省份下可预约指定商品的店铺列表
+    
+    Args:
+        session_id: 会话ID
+        province: 省份名称(需要URL编码)
+        item_id: 商品ID
+        timestamp: 时间戳，默认为当天0点的时间戳
+        max_retries: 最大重试次数
+        retry_delay: 重试间隔秒数
+        
+    Returns:
+        店铺列表数据
+    """
+    headers = get_headers()
+    
+    # 如果没有提供时间戳，则使用当天0点的时间戳
+    if not timestamp:
+        midnight = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        timestamp = int(midnight.timestamp() * 1000)
+    
+    # URL编码省份名称
+    encoded_province = requests.utils.quote(province)
+    
+    url = f"https://static.moutai519.com.cn/mt-backend/xhr/front/mall/shop/list/slim/v3/{session_id}/{encoded_province}/{item_id}/{timestamp}"
+    
+    # 添加重试机制
+    retry_count = 0
+    last_error = None
+    
+    while retry_count < max_retries:
+        try:
+            # 使用更长的超时时间
+            response = requests.get(url, headers=headers, timeout=15)
+            
+            # 检查HTTP状态码
+            if response.status_code != 200:
+                raise Exception(f"HTTP错误: {response.status_code}")
+                
+            data = response.json()
+            if data.get('code') == 2000:
+                return {
+                    'success': True,
+                    'shops': data['data']['shops']
+                }
+            else:
+                return {
+                    'success': False,
+                    'message': data.get('message', '获取店铺列表失败')
+                }
+        except requests.exceptions.RequestException as e:
+            last_error = f"网络请求异常: {str(e)}"
+            logging.warning(f"获取店铺列表失败 (尝试 {retry_count+1}/{max_retries}): {last_error}")
+        except Exception as e:
+            last_error = f"处理异常: {str(e)}"
+            logging.warning(f"获取店铺列表失败 (尝试 {retry_count+1}/{max_retries}): {last_error}")
+        
+        # 增加重试延迟，并增加随机性避免同时重试
+        retry_delay_with_jitter = retry_delay + random.uniform(0, 1)
+        time.sleep(retry_delay_with_jitter)
+        retry_count += 1
+    
+    # 所有重试失败后，返回错误
+    return {
+        'success': False,
+        'message': f'获取店铺列表失败，已重试{max_retries}次: {last_error}'
+    }
+
+def get_nearest_shop(shops, lat, lng):
+    """获取最近的店铺
+    
+    Args:
+        shops: 店铺列表
+        lat: 纬度
+        lng: 经度
+        
+    Returns:
+        最近的店铺ID
+    """
+    nearest_shop = None
+    min_distance = float('inf')
+    
+    user_point = (float(lat), float(lng))
+    
+    for shop in shops:
+        shop_lat = shop.get('lat')
+        shop_lng = shop.get('lng')
+        
+        if shop_lat and shop_lng:
+            shop_point = (float(shop_lat), float(shop_lng))
+            distance = calculate_distance(user_point, shop_point)
+            
+            if distance < min_distance:
+                min_distance = distance
+                nearest_shop = shop
+    
+    return nearest_shop.get('shopId') if nearest_shop else None
+
+def calculate_distance(point1, point2):
+    """计算两点之间的距离（基于Haversine公式）
+    
+    Args:
+        point1: (纬度, 经度)
+        point2: (纬度, 经度)
+        
+    Returns:
+        两点之间的距离（米）
+    """
+    # 地球半径（米）
+    EARTH_RADIUS = 6378137.0
+    
+    lat1, lon1 = math.radians(point1[0]), math.radians(point1[1])
+    lat2, lon2 = math.radians(point2[0]), math.radians(point2[1])
+    
+    dLat = lat2 - lat1
+    dLon = lon2 - lon1
+    
+    a = math.sin(dLat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dLon/2)**2
+    c = 2 * math.asin(math.sqrt(a))
+    
+    return EARTH_RADIUS * c
+
+def get_headers():
+    """获取标准请求头
+    
+    Returns:
+        包含必要请求头的字典
+    """
+    # 使用全局请求头或者构建新的请求头
+    if headers and len(headers) > 0:
+        return headers.copy()
+    
+    # 如果没有全局请求头，构建一个基本的请求头
+    basic_headers = {
+        'User-Agent': 'iOS;16.3;Apple;?unrecognized?',
+        'MT-APP-Version': mt_version,
+        'MT-Request-ID': f'{int(time.time() * 1000)}{random.randint(1111111, 999999999)}',
+        'MT-Device-ID': f'{int(time.time() * 1000)}{random.randint(1111111, 999999999)}',
+        'Accept': 'application/json',
+        'Accept-Language': 'zh-CN,zh-Hans;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+    }
+    
+    return basic_headers

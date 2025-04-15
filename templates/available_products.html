@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>可预约商品 - iMaoTai</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand" href="{{ url_for('home') }}">iMaoTai</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('home') }}">首页</a>
+                    </li>
+                    {% if current_user.is_authenticated %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('reservations') }}">我的预约</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('create_reservation') }}">新建预约</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('tasks') }}">自动预约</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" href="{{ url_for('available_products') }}">可预约商品</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('accounts') }}">茅台账号</a>
+                    </li>
+                    {% endif %}
+                </ul>
+                <div class="navbar-nav">
+                    {% if current_user.is_authenticated %}
+                    <span class="nav-item nav-link text-light">您好, {{ current_user.username }}</span>
+                    <a class="nav-link" href="{{ url_for('profile') }}">个人资料</a>
+                    <a class="nav-link" href="{{ url_for('logout') }}">退出</a>
+                    {% else %}
+                    <a class="nav-link" href="{{ url_for('login') }}">登录</a>
+                    <a class="nav-link" href="{{ url_for('register') }}">注册</a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+        
+        <div class="row mt-4">
+            <div class="col-md-12">
+                <h2 class="text-center mb-4">今日可预约茅台商品</h2>
+                
+                <div class="d-flex justify-content-end mb-3">
+                    <button id="refreshBtn" class="btn btn-outline-primary">
+                        <i class="bi bi-arrow-clockwise"></i> 刷新商品列表
+                    </button>
+                </div>
+                
+                <div id="loading" class="text-center">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">加载中...</span>
+                    </div>
+                    <p>获取商品列表中，请稍候...</p>
+                </div>
+                
+                <div id="productList" class="row row-cols-1 row-cols-md-3 g-4" style="display: none;">
+                    <!-- 商品列表将在这里动态加载 -->
+                </div>
+                
+                <div id="errorContainer" class="alert alert-danger" style="display: none;">
+                    <!-- 错误信息将在这里显示 -->
+                </div>
+                
+                <div id="noDataContainer" class="alert alert-info" style="display: none;">
+                    暂无可预约商品信息
+                </div>
+            </div>
+        </div>
+        
+        <!-- 店铺列表模态框 -->
+        <div class="modal fade" id="shopModal" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-scrollable modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">商品预约门店列表</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div id="shopLoading" class="text-center">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">加载中...</span>
+                            </div>
+                            <p>获取店铺列表中，请稍候...</p>
+                        </div>
+                        
+                        <div id="shopListHeader" style="display: none;">
+                            <div class="alert alert-info">
+                                <h5 id="shopProductTitle"></h5>
+                                <p>点击店铺选择作为预约地点</p>
+                            </div>
+                        </div>
+                        
+                        <div id="shopList" style="display: none;">
+                            <!-- 店铺列表将在这里动态加载 -->
+                        </div>
+                        
+                        <div id="shopErrorContainer" class="alert alert-danger" style="display: none;">
+                            <!-- 错误信息将在这里显示 -->
+                        </div>
+                        
+                        <div id="noShopContainer" class="alert alert-warning" style="display: none;">
+                            未找到可预约门店
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                        <button type="button" class="btn btn-primary" id="findNearestShop">查找最近门店</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <footer class="bg-light py-4 mt-5">
+        <div class="container text-center">
+            <p class="mb-0">&copy; 2025 iMaoTai - 茅台预约工具</p>
+        </div>
+    </footer>
+    
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // 当前选中的商品和商店信息
+        let currentItemId = '';
+        let currentItemName = '';
+        let shopModal = null;
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            // 初始化模态框
+            shopModal = new bootstrap.Modal(document.getElementById('shopModal'));
+            
+            // 加载商品列表
+            loadProducts();
+            
+            // 刷新按钮点击事件
+            document.getElementById('refreshBtn').addEventListener('click', loadProducts);
+            
+            // 查找最近门店按钮点击事件
+            document.getElementById('findNearestShop').addEventListener('click', findNearestShop);
+        });
+        
+        // 加载商品列表
+        function loadProducts() {
+            // 显示加载中
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('productList').style.display = 'none';
+            document.getElementById('errorContainer').style.display = 'none';
+            document.getElementById('noDataContainer').style.display = 'none';
+            
+            fetch('/api/get_products')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        const items = data.items;
+                        renderProducts(items);
+                    } else {
+                        showError(data.message);
+                    }
+                })
+                .catch(error => {
+                    showError('获取商品列表失败: ' + error.message);
+                })
+                .finally(() => {
+                    document.getElementById('loading').style.display = 'none';
+                });
+        }
+        
+        // 渲染商品列表
+        function renderProducts(items) {
+            const productList = document.getElementById('productList');
+            productList.innerHTML = '';
+            
+            if (!items || items.length === 0) {
+                document.getElementById('noDataContainer').style.display = 'block';
+                return;
+            }
+            
+            items.forEach(item => {
+                const productCard = document.createElement('div');
+                productCard.className = 'col';
+                
+                const imageUrl = item.picCompressDomain && item.picPath 
+                    ? `${item.picCompressDomain}${item.picPath}` 
+                    : 'https://via.placeholder.com/300x300?text=无图片';
+                
+                productCard.innerHTML = `
+                    <div class="card h-100">
+                        <img src="${imageUrl}" class="card-img-top" alt="${item.title}" style="max-height: 200px; object-fit: contain;">
+                        <div class="card-body">
+                            <h5 class="card-title">${item.title}</h5>
+                            <p class="card-text">${item.content || '暂无描述'}</p>
+                            <p class="card-text">
+                                <small class="text-muted">价格: ¥${item.price/100}</small>
+                            </p>
+                        </div>
+                        <div class="card-footer">
+                            <button class="btn btn-primary view-shops" data-item-id="${item.itemId}" data-item-name="${item.title}">查看可预约门店</button>
+                        </div>
+                    </div>
+                `;
+                
+                productList.appendChild(productCard);
+            });
+            
+            // 添加查看门店按钮点击事件
+            document.querySelectorAll('.view-shops').forEach(button => {
+                button.addEventListener('click', function() {
+                    const itemId = this.getAttribute('data-item-id');
+                    const itemName = this.getAttribute('data-item-name');
+                    currentItemId = itemId;
+                    currentItemName = itemName;
+                    loadShops(itemId, itemName);
+                });
+            });
+            
+            productList.style.display = 'flex';
+        }
+        
+        // 加载店铺列表
+        function loadShops(itemId, itemName) {
+            // 重置模态框
+            document.getElementById('shopLoading').style.display = 'block';
+            document.getElementById('shopListHeader').style.display = 'none';
+            document.getElementById('shopList').style.display = 'none';
+            document.getElementById('shopErrorContainer').style.display = 'none';
+            document.getElementById('noShopContainer').style.display = 'none';
+            
+            // 设置商品标题
+            document.getElementById('shopProductTitle').textContent = itemName;
+            
+            // 显示模态框
+            shopModal.show();
+            
+            // 加载店铺列表
+            fetch(`/api/get_shops?item_id=${itemId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        const shops = data.shops;
+                        renderShops(shops);
+                    } else {
+                        showShopError(data.message);
+                    }
+                })
+                .catch(error => {
+                    showShopError('获取店铺列表失败: ' + error.message);
+                })
+                .finally(() => {
+                    document.getElementById('shopLoading').style.display = 'none';
+                });
+        }
+        
+        // 渲染店铺列表
+        function renderShops(shops) {
+            const shopList = document.getElementById('shopList');
+            shopList.innerHTML = '';
+            
+            if (!shops || shops.length === 0) {
+                document.getElementById('noShopContainer').style.display = 'block';
+                return;
+            }
+            
+            // 创建店铺列表表格
+            const table = document.createElement('table');
+            table.className = 'table table-hover';
+            
+            const thead = document.createElement('thead');
+            thead.innerHTML = `
+                <tr>
+                    <th>店铺名称</th>
+                    <th>地址</th>
+                    <th>商品数量</th>
+                    <th>操作</th>
+                </tr>
+            `;
+            
+            const tbody = document.createElement('tbody');
+            
+            shops.forEach(shop => {
+                // 查找当前商品的数量
+                let itemCount = 0;
+                let itemInfo = null;
+                
+                if (shop.items && shop.items.length > 0) {
+                    itemInfo = shop.items.find(item => item.itemId === currentItemId);
+                    if (itemInfo) {
+                        itemCount = itemInfo.count;
+                    }
+                }
+                
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${shop.shopName}</td>
+                    <td>${shop.address || '无地址信息'}</td>
+                    <td>${itemCount}</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-primary select-shop" 
+                            data-shop-id="${shop.shopId}" 
+                            data-shop-name="${shop.shopName}"
+                            data-lat="${shop.lat || ''}"
+                            data-lng="${shop.lng || ''}">
+                            选择
+                        </button>
+                    </td>
+                `;
+                
+                tbody.appendChild(tr);
+            });
+            
+            table.appendChild(thead);
+            table.appendChild(tbody);
+            shopList.appendChild(table);
+            
+            // 添加选择店铺按钮点击事件
+            document.querySelectorAll('.select-shop').forEach(button => {
+                button.addEventListener('click', function() {
+                    const shopId = this.getAttribute('data-shop-id');
+                    const shopName = this.getAttribute('data-shop-name');
+                    
+                    // 这里可以实现将商品和店铺添加到预约或任务的逻辑
+                    // 例如可以弹出确认框或直接提交
+                    if (confirm(`确定选择 ${shopName} 作为 ${currentItemName} 的预约门店吗？`)) {
+                        // 这里可以实现保存到本地存储或直接提交到服务器
+                        localStorage.setItem(`shop_${currentItemId}`, JSON.stringify({
+                            shopId: shopId,
+                            shopName: shopName,
+                            itemId: currentItemId,
+                            itemName: currentItemName
+                        }));
+                        
+                        alert(`已选择 ${shopName} 作为 ${currentItemName} 的预约门店`);
+                        shopModal.hide();
+                    }
+                });
+            });
+            
+            document.getElementById('shopListHeader').style.display = 'block';
+            shopList.style.display = 'block';
+        }
+        
+        // 查找最近的门店
+        function findNearestShop() {
+            if (!currentItemId) {
+                showShopError('未选择商品');
+                return;
+            }
+            
+            // 获取位置信息
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    position => {
+                        const lat = position.coords.latitude;
+                        const lng = position.coords.longitude;
+                        
+                        // 显示加载中
+                        document.getElementById('shopLoading').style.display = 'block';
+                        document.getElementById('shopList').style.display = 'none';
+                        document.getElementById('shopErrorContainer').style.display = 'none';
+                        document.getElementById('noShopContainer').style.display = 'none';
+                        
+                        // 发送请求查找最近的店铺
+                        fetch('/api/find_nearest_shop', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                item_id: currentItemId,
+                                lat: lat,
+                                lng: lng
+                            })
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.success) {
+                                // 找到最近的店铺后，在店铺列表中标记或滚动到该店铺
+                                highlightNearestShop(data.shop_id);
+                            } else {
+                                showShopError(data.message);
+                            }
+                        })
+                        .catch(error => {
+                            showShopError('查找最近店铺失败: ' + error.message);
+                        })
+                        .finally(() => {
+                            document.getElementById('shopLoading').style.display = 'none';
+                        });
+                    },
+                    error => {
+                        showShopError('获取位置失败: ' + error.message);
+                    }
+                );
+            } else {
+                showShopError('您的浏览器不支持地理定位');
+            }
+        }
+        
+        // 高亮显示最近的店铺
+        function highlightNearestShop(shopId) {
+            // 移除所有高亮
+            document.querySelectorAll('tr.table-primary').forEach(tr => {
+                tr.classList.remove('table-primary');
+            });
+            
+            // 找到目标店铺按钮
+            const shopButton = document.querySelector(`.select-shop[data-shop-id="${shopId}"]`);
+            if (shopButton) {
+                // 高亮显示所在行
+                const row = shopButton.closest('tr');
+                row.classList.add('table-primary');
+                
+                // 滚动到该行
+                row.scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'center'
+                });
+                
+                // 提示用户
+                const shopName = shopButton.getAttribute('data-shop-name');
+                alert(`已找到最近的门店: ${shopName}`);
+            } else {
+                showShopError('未找到符合条件的门店');
+            }
+        }
+        
+        // 显示错误信息
+        function showError(message) {
+            const errorContainer = document.getElementById('errorContainer');
+            errorContainer.textContent = message;
+            errorContainer.style.display = 'block';
+            document.getElementById('productList').style.display = 'none';
+        }
+        
+        // 显示店铺错误信息
+        function showShopError(message) {
+            const errorContainer = document.getElementById('shopErrorContainer');
+            errorContainer.textContent = message;
+            errorContainer.style.display = 'block';
+            document.getElementById('shopList').style.display = 'none';
+        }
+    </script>
+</body>
+</html> 
