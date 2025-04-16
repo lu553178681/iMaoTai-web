@@ -450,10 +450,10 @@ def act_params(shop_id: str, item_id: str):
         # 构建预约参数
         params = {
             "itemInfoList": [{"count": 1, "itemId": item_id}],
-            "sessionId": int(session_id),
-            "userId": userId,
-            "shopId": shop_id
-        }
+              "sessionId": int(session_id),
+              "userId": userId,
+              "shopId": shop_id
+              }
         
         # 加密参数
         s = json.dumps(params)
@@ -765,7 +765,7 @@ def get_map(lat: str, lng: str, max_retries: int = 3):
                 p_c_map[provinceName][cityName] = [k]
             else:
                 p_c_map[provinceName][cityName].append(k)
-        
+
         print(f"[{datetime.datetime.now()}] ✅ 成功获取地图信息: {len(p_c_map)}个省份, {len(shop_data)}个门店")
         return p_c_map, dict(shop_data)
     except Exception as e:

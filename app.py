@@ -56,6 +56,13 @@ class User(UserMixin, db.Model):
 
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
+    
+class RegistrationForm(FlaskForm):
+    username = StringField('用户名', validators=[DataRequired(), Length(min=2, max=20)])
+    password = PasswordField('密码', validators=[DataRequired(), Length(min=6)])
+    confirm_password = PasswordField('确认密码', 
+                                   validators=[DataRequired(), EqualTo('password', message='两次输入的密码必须一致')])
+    submit = SubmitField('注册')
 
 @login_manager.user_loader
 def load_user(user_id):
@@ -88,6 +95,8 @@ def home():
                              success_count=success_count,
                              recent_reservations=recent_reservations)
     return render_template('home.html')
+
+
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
