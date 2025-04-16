@@ -15,6 +15,8 @@ import hashlib
 import logging
 import privateCrypt
 from urllib.parse import quote
+import copy
+import uuid
 
 AES_KEY = 'qbhajinldepmucsonaaaccgypwuvcjaa'
 AES_IV = '2018534749963515'
@@ -106,31 +108,28 @@ def init_headers(user_id: str = '1', token: str = '2', lat: str = '29.83826', ln
     device_id = f'MT-{int(time.time() * 1000)}-{random.randint(1000, 9999)}'
     
     # 从令牌中提取设备ID (如果token有效)
-    if token and token != '2':
+    jwt_device_id = None
+    if token and token != '2' and len(token.split('.')) == 3:
         try:
             # 尝试解析JWT令牌
-            # JWT令牌由三部分组成，用.分隔: header.payload.signature
+            import base64
+            
             token_parts = token.split('.')
-            if len(token_parts) == 3:
-                # 解码payload部分（第二部分）
-                import base64
-                import json
+            payload = token_parts[1]
+            payload += '=' * (4 - len(payload) % 4) if len(payload) % 4 else ''
+            
+            try:
+                # 尝试解码
+                decoded_payload = base64.b64decode(payload).decode('utf-8')
+                token_data = json.loads(decoded_payload)
                 
-                # 修正base64填充
-                payload = token_parts[1]
-                payload += '=' * (4 - len(payload) % 4) if len(payload) % 4 else ''
-                
-                try:
-                    # 尝试解码
-                    decoded_payload = base64.b64decode(payload).decode('utf-8')
-                    token_data = json.loads(decoded_payload)
-                    
-                    # 检查是否包含设备ID
-                    if 'deviceId' in token_data:
-                        device_id = token_data['deviceId']
-                        print(f"[{datetime.datetime.now()}] ✅ 从JWT令牌中提取到设备ID: {device_id}")
-                except Exception as e:
-                    print(f"[{datetime.datetime.now()}] ⚠️ JWT令牌解析失败: {str(e)}")
+                # 检查是否包含设备ID
+                if 'deviceId' in token_data:
+                    jwt_device_id = token_data['deviceId']
+                    device_id = jwt_device_id
+                    print(f"[{datetime.datetime.now()}] ✅ 从JWT令牌中提取到设备ID: {device_id}")
+            except Exception as e:
+                print(f"[{datetime.datetime.now()}] ⚠️ JWT令牌解析失败: {str(e)}")
         except Exception as e:
             print(f"[{datetime.datetime.now()}] ⚠️ 处理令牌时出错: {str(e)}")
         
@@ -149,12 +148,26 @@ def init_headers(user_id: str = '1', token: str = '2', lat: str = '29.83826', ln
     # 更新版本信息
     dict.update(headers, {"MT-APP-Version": mt_version})
     
-    # 更新请求ID，使用与设备ID匹配的格式
-    request_id = f'{int(time.time() * 1000)}{random.randint(1111111, 999999999)}'
+    # 生成一致的请求ID和设备ID
+    timestamp = int(time.time() * 1000)
+    request_id = f'{timestamp}{random.randint(111111, 999999)}'
     
-    # 使用从令牌提取或生成的设备ID - 关键点
+    # 茅台新版API认证所需参数
     dict.update(headers, {"MT-Request-ID": request_id})
     dict.update(headers, {"MT-Device-ID": device_id})
+    
+    # 添加其他必要的头信息
+    dict.update(headers, {"Accept": "application/json, text/plain, */*"})
+    dict.update(headers, {"Accept-Language": "zh-CN,zh-Hans;q=0.9,en;q=0.8"})
+    dict.update(headers, {"Accept-Encoding": "gzip, deflate, br"})
+    dict.update(headers, {"Connection": "keep-alive"})
+    dict.update(headers, {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"})
+    dict.update(headers, {"Content-Type": "application/json"})
+    
+    # 新版茅台API需要的ianus认证参数基础设置
+    nonce = ''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=10))
+    dict.update(headers, {"MT-Timestamp": str(timestamp)})
+    dict.update(headers, {"MT-Nonce": nonce})
     
     # 打印关键认证信息
     print(f"[{datetime.datetime.now()}] ✅ Headers初始化完成，关键字段: userId={headers.get('userId')}, MT-Token长度={len(headers.get('MT-Token', ''))}, 位置=[{lat},{lng}], 设备ID={device_id}")
@@ -281,17 +294,53 @@ def get_location_count(province: str,
         return '0'
     
     # 构建请求URL
-    url = f"https://static.moutai519.com.cn/mt-backend/xhr/front/mall/shop/list/slim/v3/{session_id}/{province}/{item_code}/{day_time}"
+    url = f"https://static.moutai519.com.cn/mt-backend/xhr/front/mall/shop/list/slim/v3/{session_id}/{quote(province)}/{item_code}/{day_time}"
     print(f"[{datetime.datetime.now()}] 请求URL: {url}")
     
-    # 使用request_url_with_retry函数获取响应
+    # 为静态资源请求构建专用请求头
+    static_headers = {
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'zh-CN,zh-Hans;q=0.9,en;q=0.8',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Referer': 'https://h5.moutai519.com.cn/',
+        'Origin': 'https://h5.moutai519.com.cn',
+        'Host': 'static.moutai519.com.cn',
+        'MT-Device-ID': headers.get('MT-Device-ID', ''),
+        'MT-APP-Version': mt_version,
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        'MT-Lat': lat,
+        'MT-Lng': lng,
+        'mt-lat': lat,
+        'mt-lng': lng
+    }
+    
+    # 使用专用请求头发送请求
     # 优先尝试不使用代理
-    response = request_url_with_retry(
-        url=url,
-        headers=headers, 
-        timeout=15,
-        max_retries=max_retries
-    )
+    response = None
+    try:
+        print(f"[{datetime.datetime.now()}] 使用浏览器方式请求店铺数据...")
+        response = requests.get(url, headers=static_headers, timeout=15)
+        if response.status_code == 200:
+            print(f"[{datetime.datetime.now()}] ✅ 浏览器方式请求成功")
+        else:
+            print(f"[{datetime.datetime.now()}] ⚠️ 浏览器方式请求返回状态码: {response.status_code}")
+            response = None
+    except Exception as e:
+        print(f"[{datetime.datetime.now()}] ⚠️ 浏览器方式请求异常: {str(e)}")
+        response = None
+    
+    # 如果浏览器方式失败，使用原始方式+重试机制
+    if response is None:
+        print(f"[{datetime.datetime.now()}] 尝试使用原始方式...")
+        response = request_url_with_retry(
+            url=url,
+            headers=headers, 
+            timeout=15,
+            max_retries=max_retries
+        )
     
     # 如果不使用代理失败，且配置了代理，则尝试使用代理
     if response is None and hasattr(config, 'HTTP_PROXY') and config.HTTP_PROXY:
@@ -486,155 +535,168 @@ def act_params(shop_id: str, item_id: str):
 
 
 # 消息推送
-def send_msg(title, content):
+def send_msg(title, content, template='markdown'):
+    """
+    使用pushplus推送消息
+    
+    Args:
+        title: 消息标题
+        content: 消息内容
+        template: 消息模板，默认为markdown
+    """
     if config.PUSH_TOKEN is None:
-        return
+        print(f"[{datetime.datetime.now()}] ⚠️ 未配置PUSH_TOKEN，无法发送通知")
+        return False
+    
+    print(f"[{datetime.datetime.now()}] 开始推送通知: {title}")
     url = 'http://www.pushplus.plus/send'
-    r = requests.get(url, params={'token': config.PUSH_TOKEN,
-                                  'title': title,
-                                  'content': content})
-    logging.info(f'通知推送结果：{r.status_code, r.text}')
+    
+    # 构建请求参数
+    params = {
+        'token': config.PUSH_TOKEN,
+        'title': title,
+        'content': content,
+        'template': template  # 支持markdown格式
+    }
+    
+    try:
+        r = requests.get(url, params=params, timeout=10)
+        if r.status_code == 200:
+            resp_json = r.json()
+            if resp_json.get('code') == 200:
+                print(f"[{datetime.datetime.now()}] ✅ 通知推送成功: {title}")
+                logging.info(f'通知推送成功：{r.status_code}, {r.text}')
+                return True
+            else:
+                print(f"[{datetime.datetime.now()}] ❌ 通知推送API错误: {resp_json.get('msg', '未知错误')}")
+                logging.warning(f'通知推送API错误：{r.status_code}, {r.text}')
+                return False
+        else:
+            print(f"[{datetime.datetime.now()}] ❌ 通知推送HTTP错误: {r.status_code}")
+            logging.warning(f'通知推送HTTP错误：{r.status_code}, {r.text}')
+            return False
+    except Exception as e:
+        print(f"[{datetime.datetime.now()}] ❌ 通知推送异常: {str(e)}")
+        logging.error(f'通知推送异常：{str(e)}')
+        return False
 
 
 # 核心代码，执行预约
-def reservation(params: dict, mobile: str, max_retries: int = 3):
+def reservation(params, mobile=''):
     """
-    执行预约，支持重试机制
+    预约商品
+    """
+    # 深拷贝防止修改原始数据
+    request_params = copy.deepcopy(params)
     
-    Args:
-        params: 预约参数
-        mobile: 手机号
-        max_retries: 最大重试次数
-        
-    Returns:
-        (success, message): 预约结果
-    """
+    # userId在header中，从params中移除
+    if 'userId' in request_params:
+        request_params.pop('userId')
+    
+    # 构建请求头
+    headers = get_headers()
+    
+    # 检查device_id
+    if 'deviceId' not in request_params:
+        device_id = generate_device_id()
+        request_params['deviceId'] = device_id
+    
+    print(f"[{datetime.datetime.now()}] 🔄 正在预约商品...")
+    
     try:
-        # 移除userId参数，防止冲突
-        if 'userId' in params:
-            userId = params.pop('userId')
-            print(f"[{datetime.datetime.now()}] 移除params中的userId: {userId}")
-        
-        # 检查headers中是否包含必要的认证信息
-        if 'MT-Token' not in headers or not headers['MT-Token'] or headers['MT-Token'] == '2':
-            print(f"[{datetime.datetime.now()}] ⚠️ 警告: MT-Token无效或为默认值: {headers.get('MT-Token')}")
-        if 'userId' not in headers or not headers['userId'] or headers['userId'] == '1':
-            print(f"[{datetime.datetime.now()}] ⚠️ 警告: userId无效或为默认值: {headers.get('userId')}")
-        if 'current_session_id' not in headers or not headers['current_session_id']:
-            print(f"[{datetime.datetime.now()}] ⚠️ 警告: current_session_id缺失")
-        if 'MT-Device-ID' not in headers or not headers['MT-Device-ID']:
-            print(f"[{datetime.datetime.now()}] ⚠️ 警告: MT-Device-ID缺失")
-        
-        # 检查设备ID是否从令牌中提取
-        token = headers.get('MT-Token', '')
-        device_id = headers.get('MT-Device-ID', '')
-        
-        print(f"[{datetime.datetime.now()}] 设备ID检查: MT-Device-ID = {device_id}")
-        
-        # 打印请求信息
-        print(f"[{datetime.datetime.now()}] 预约请求参数: {json.dumps(params, ensure_ascii=False)}")
-        print(f"[{datetime.datetime.now()}] 请求头信息: userId={headers.get('userId', '缺失')}, MT-Token={headers.get('MT-Token', '缺失')[:4]}..., MT-Device-ID={headers.get('MT-Device-ID', '缺失')}")
-
-        # 发送请求
-        url = "https://app.moutai519.com.cn/xhr/front/mall/reservation/add"
-        print(f"[{datetime.datetime.now()}] 发送预约请求到茅台服务器: {url}")
-        
-        # 使用request_url_with_retry代替直接请求
+        # 发送预约请求
         response = request_url_with_retry(
-            url=url,
+            url="https://app.moutai519.com.cn/xhr/front/mall/reservation/add",
             method="POST",
             headers=headers,
-            json_data=params,
-            timeout=15,
-            max_retries=max_retries
+            json_data=request_params,
+            max_retries=3,
+            use_proxy=True
         )
         
-        # 如果不使用代理失败，且配置了代理，则尝试使用代理
-        if response is None and hasattr(config, 'HTTP_PROXY') and config.HTTP_PROXY:
-            print(f"[{datetime.datetime.now()}] 不使用代理请求失败，尝试使用代理...")
-            response = request_url_with_retry(
-                url=url,
-                method="POST",
-                headers=headers,
-                json_data=params,
-                timeout=15,
-                max_retries=max_retries,
-                use_proxy=True
-            )
-        
-        # 如果请求失败
-        if response is None:
-            error_msg = "预约请求最终失败，请检查网络连接和API可用性"
-            print(f"[{datetime.datetime.now()}] ❌ {error_msg}")
-            return False, error_msg
-        
-        # 记录详细响应
-        try:
-            response_json = response.json()
-            print(f"[{datetime.datetime.now()}] 预约响应: 状态码={response.status_code}, 内容={json.dumps(response_json, ensure_ascii=False)}")
+        # 检查请求是否成功
+        if isinstance(response, dict) and response.get('error'):
+            # 请求失败，返回错误信息
+            error_api_code = response.get('api_code', 0)
+            error_message = response.get('message', '未知错误')
+            status_code = response.get('status_code', 0)
             
-            # 特别处理设备ID不一致错误
-            if response.status_code == 401 and response_json.get('message') and 'device id inconsistency' in response_json.get('message'):
-                print(f"[{datetime.datetime.now()}] ❌ 设备ID不一致错误: 令牌中的设备ID与请求头中的设备ID不匹配")
-                print(f"[{datetime.datetime.now()}] 请确保使用了相同的设备ID：{device_id}")
+            # 格式化详细错误信息
+            detail_error = f"HTTP状态码={status_code}, API错误码={error_api_code}, 错误信息={error_message}"
+            print(f"[{datetime.datetime.now()}] ❌ 预约失败: {detail_error}")
+            
+            # 特定错误码的友好提示
+            if error_api_code == 4021:
+                friendly_message = "申购已结束，请明天再来"
+            elif error_api_code == 4019:
+                friendly_message = "您今日已申购，请明天再来"
+            elif error_api_code == 4015:
+                friendly_message = "申购商品已约满，请明天再来"
+            elif error_api_code == 4011 and "设备ID不一致" in error_message:
+                friendly_message = "设备ID不一致，请检查配置"
+            elif error_api_code == 4011:
+                friendly_message = "认证失败，请检查Token是否过期"
+            else:
+                friendly_message = error_message or "预约失败，请检查网络和配置"
                 
-                # 尝试解析JWT令牌中的deviceId
-                if token and len(token.split('.')) == 3:
-                    try:
-                        # 同上面的解析逻辑
-                        import base64
-                        import json
-                        
-                        token_parts = token.split('.')
-                        payload = token_parts[1]
-                        payload += '=' * (4 - len(payload) % 4) if len(payload) % 4 else ''
-                        
-                        decoded_payload = base64.b64decode(payload).decode('utf-8')
-                        token_data = json.loads(decoded_payload)
-                        
-                        if 'deviceId' in token_data:
-                            jwt_device_id = token_data['deviceId']
-                            print(f"[{datetime.datetime.now()}] JWT令牌中的设备ID: {jwt_device_id}")
-                            print(f"[{datetime.datetime.now()}] 请求头中的设备ID: {device_id}")
-                            print(f"[{datetime.datetime.now()}] 设备ID匹配: {'是' if jwt_device_id == device_id else '否'}")
-                    except Exception as jwt_err:
-                        print(f"[{datetime.datetime.now()}] 解析JWT令牌时出错: {jwt_err}")
-        except Exception as json_err:
-            print(f"[{datetime.datetime.now()}] 解析响应JSON时出错: {json_err}")
-            print(f"[{datetime.datetime.now()}] 预约响应: 状态码={response.status_code}, 内容={response.text}")
-
-        # 详细日志信息
-        msg = f'预约:{mobile};Code:{response.status_code};Body:{response.text};'
-        logging.info(msg)
-
-        # 处理API响应
-        if response.status_code == 200:
-            response_data = response.json()
-            if response_data.get('code') == 2000:  # 成功的API状态码
-                r_success = True
-                msg = f'手机:{mobile};预约成功'
-                print(f"[{datetime.datetime.now()}] ✅ 预约成功: {mobile}")
+            # 如果提供了手机号，添加到消息中
+            if mobile:
+                friendly_message = f"用户 {mobile}: {friendly_message}"
+                
+            return False, friendly_message
+        
+        # 成功获取响应，解析JSON
+        try:
+            resp_json = response.json() if hasattr(response, 'json') else response
+            
+            # 检查API返回码
+            if resp_json.get('code') == 2000:
+                # 茅台API成功码是2000
+                print(f"[{datetime.datetime.now()}] ✅ 预约成功: {resp_json.get('data', {})}")
+                
+                success_msg = "预约成功"
+                if mobile:
+                    success_msg = f"用户 {mobile}: 预约成功"
+                    
+                return True, success_msg
             else:
-                r_success = False
-                msg = f'预约失败: API状态码错误: {response_data.get("code")}, 信息: {response_data.get("message", "无错误信息")}'
-                print(f"[{datetime.datetime.now()}] ❌ 预约失败: {msg}")
-        else:
-            r_success = False
-            if response.status_code == 401:
-                try:
-                    error_data = response.json()
-                    msg = f'预约失败: 认证错误(401), 信息: {error_data.get("message", "设备ID不一致")}'
-                except:
-                    msg = f'预约失败: 认证错误(401), 响应: {response.text}'
-            else:
-                msg = f'预约失败: HTTP状态码: {response.status_code}, 响应: {response.text}'
-            print(f"[{datetime.datetime.now()}] ❌ 预约失败: HTTP错误 {response.status_code}")
-
-        return r_success, msg
+                # API业务逻辑错误
+                error_code = resp_json.get('code')
+                error_msg = resp_json.get('message', '未知错误')
+                
+                print(f"[{datetime.datetime.now()}] ❌ 预约API返回错误: 代码={error_code}, 信息={error_msg}")
+                
+                # 特定错误码的友好提示
+                if error_code == 4021:
+                    friendly_message = "申购已结束，请明天再来"
+                elif error_code == 4019:
+                    friendly_message = "您今日已申购，请明天再来"
+                elif error_code == 4015:
+                    friendly_message = "申购商品已约满，请明天再来"
+                else:
+                    friendly_message = error_msg
+                    
+                # 如果提供了手机号，添加到消息中
+                if mobile:
+                    friendly_message = f"用户 {mobile}: {friendly_message}"
+                    
+                return False, friendly_message
+        except json.JSONDecodeError as e:
+            print(f"[{datetime.datetime.now()}] ❌ 解析预约响应失败: {str(e)}")
+            
+            error_msg = "预约请求响应格式错误"
+            if mobile:
+                error_msg = f"用户 {mobile}: {error_msg}"
+                
+            return False, error_msg
+            
     except Exception as e:
         error_msg = f"预约过程异常: {str(e)}"
-        print(f"[{datetime.datetime.now()}] ❌ 预约请求异常: {error_msg}")
-        logging.error(error_msg)
+        print(f"[{datetime.datetime.now()}] ❌ {error_msg}")
+        
+        if mobile:
+            error_msg = f"用户 {mobile}: {error_msg}"
+            
         return False, error_msg
 
 
@@ -880,7 +942,8 @@ def get_shop_list(session_id, province, item_id, timestamp=None, max_retries=3, 
     Returns:
         店铺列表数据
     """
-    headers = get_headers()
+    # 获取标准请求头
+    base_headers = get_headers()
     
     # 如果没有提供时间戳，则使用当天0点的时间戳
     if not timestamp:
@@ -892,14 +955,62 @@ def get_shop_list(session_id, province, item_id, timestamp=None, max_retries=3, 
     
     url = f"https://static.moutai519.com.cn/mt-backend/xhr/front/mall/shop/list/slim/v3/{session_id}/{encoded_province}/{item_id}/{timestamp}"
     
+    # 构建专用的浏览器方式请求头
+    browser_headers = {
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'zh-CN,zh-Hans;q=0.9,en;q=0.8',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Referer': 'https://h5.moutai519.com.cn/',
+        'Origin': 'https://h5.moutai519.com.cn',
+        'Host': 'static.moutai519.com.cn',
+        'MT-Device-ID': base_headers.get('MT-Device-ID', ''),
+        'MT-APP-Version': mt_version,
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
+    }
+    
     # 添加重试机制
     retry_count = 0
     last_error = None
     
+    # 首先尝试浏览器方式请求
+    try:
+        print(f"[{datetime.datetime.now()}] 尝试以浏览器方式请求店铺列表...")
+        response = requests.get(url, headers=browser_headers, timeout=15)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('code') == 2000:
+                print(f"[{datetime.datetime.now()}] ✅ 浏览器方式请求成功")
+                return {
+                    'success': True,
+                    'shops': data['data']['shops']
+                }
+            else:
+                print(f"[{datetime.datetime.now()}] ⚠️ 浏览器方式请求返回非成功代码: {data.get('code')}")
+        else:
+            print(f"[{datetime.datetime.now()}] ⚠️ 浏览器方式请求返回HTTP状态码: {response.status_code}")
+    except Exception as e:
+        print(f"[{datetime.datetime.now()}] ⚠️ 浏览器方式请求异常: {str(e)}")
+    
+    # 浏览器方式失败，使用标准方式重试
+    print(f"[{datetime.datetime.now()}] 切换到标准方式请求...")
+    
     while retry_count < max_retries:
         try:
+            # 判断是否使用代理
+            proxies = None
+            if hasattr(config, 'HTTP_PROXY') and config.HTTP_PROXY and retry_count >= max_retries // 2:
+                proxies = {
+                    "http": config.HTTP_PROXY,
+                    "https": config.HTTP_PROXY
+                }
+                print(f"[{datetime.datetime.now()}] 尝试使用代理: {config.HTTP_PROXY}")
+            
             # 使用更长的超时时间
-            response = requests.get(url, headers=headers, timeout=15)
+            response = requests.get(url, headers=base_headers, timeout=15, proxies=proxies)
             
             # 检查HTTP状态码
             if response.status_code != 200:
@@ -907,6 +1018,7 @@ def get_shop_list(session_id, province, item_id, timestamp=None, max_retries=3, 
                 
             data = response.json()
             if data.get('code') == 2000:
+                print(f"[{datetime.datetime.now()}] ✅ 标准方式请求成功 (尝试 {retry_count+1})")
                 return {
                     'success': True,
                     'shops': data['data']['shops']
@@ -925,10 +1037,12 @@ def get_shop_list(session_id, province, item_id, timestamp=None, max_retries=3, 
         
         # 增加重试延迟，并增加随机性避免同时重试
         retry_delay_with_jitter = retry_delay + random.uniform(0, 1)
+        print(f"[{datetime.datetime.now()}] 等待 {retry_delay_with_jitter:.2f} 秒后重试...")
         time.sleep(retry_delay_with_jitter)
         retry_count += 1
     
     # 所有重试失败后，返回错误
+    print(f"[{datetime.datetime.now()}] ❌ 获取店铺列表最终失败")
     return {
         'success': False,
         'message': f'获取店铺列表失败，已重试{max_retries}次: {last_error}'
@@ -996,98 +1110,267 @@ def get_headers():
     """
     # 使用全局请求头或者构建新的请求头
     if headers and len(headers) > 0:
-        return headers.copy()
+        request_headers = headers.copy()
+        
+        # 确保包含必要的通用请求头
+        if 'User-Agent' not in request_headers or 'iOS;16.3;Apple;?unrecognized?' in request_headers.get('User-Agent', ''):
+            request_headers['User-Agent'] = 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148'
+        
+        if 'Accept' not in request_headers:
+            request_headers['Accept'] = 'application/json, text/plain, */*'
+            
+        if 'Accept-Language' not in request_headers:
+            request_headers['Accept-Language'] = 'zh-CN,zh-Hans;q=0.9,en;q=0.8'
+            
+        if 'Accept-Encoding' not in request_headers:
+            request_headers['Accept-Encoding'] = 'gzip, deflate, br'
+            
+        if 'Connection' not in request_headers:
+            request_headers['Connection'] = 'keep-alive'
+            
+        return request_headers
     
-    # 如果没有全局请求头，构建一个基本的请求头
-    basic_headers = {
-        'User-Agent': 'iOS;16.3;Apple;?unrecognized?',
+    # 如果没有全局请求头，构建一个更完整的浏览器风格请求头
+    timestamp = int(time.time() * 1000)
+    device_id = f'MT-{timestamp}-{random.randint(1000, 9999)}'
+    request_id = f'{timestamp}{random.randint(111111, 999999999)}'
+    
+    browser_headers = {
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148',
         'MT-APP-Version': mt_version,
-        'MT-Request-ID': f'{int(time.time() * 1000)}{random.randint(1111111, 999999999)}',
-        'MT-Device-ID': f'{int(time.time() * 1000)}{random.randint(1111111, 999999999)}',
-        'Accept': 'application/json',
-        'Accept-Language': 'zh-CN,zh-Hans;q=0.9',
+        'MT-Request-ID': request_id,
+        'MT-Device-ID': device_id,
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'zh-CN,zh-Hans;q=0.9,en;q=0.8',
         'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Referer': 'https://h5.moutai519.com.cn/',
+        'Origin': 'https://h5.moutai519.com.cn',
+        'MT-K': str(timestamp - random.randint(10000, 50000)),
+        'MT-User-Tag': '0',
+        'MT-Network-Type': 'WIFI',
+        'MT-Token': '1',
+        'MT-Team-ID': '',
+        'MT-Info': f'{hashlib.md5(str(timestamp).encode()).hexdigest()[:32]}'
     }
     
-    return basic_headers
+    return browser_headers
 
-def request_url_with_retry(url, method="GET", headers=None, json_data=None, timeout=15, max_retries=3, use_proxy=False):
+def request_url_with_retry(url, method="GET", params=None, data=None, json_data=None, headers=None, timeout=10, max_retries=3, use_proxy=False):
     """
-    发送HTTP请求，支持代理和重试机制
-    
+    发送HTTP请求，支持重试机制
+
     Args:
         url: 请求URL
-        method: HTTP方法，默认GET
-        headers: 请求头
-        json_data: POST请求的JSON数据
-        timeout: 超时时间(秒)
+        method: 请求方法，GET或POST
+        params: URL参数 (字典)
+        data: 表单数据 (字典)
+        json_data: JSON数据 (字典)
+        headers: 请求头 (字典)
+        timeout: 超时时间 (秒)
         max_retries: 最大重试次数
         use_proxy: 是否使用代理
-        
+
     Returns:
-        响应对象或None(失败时)
+        requests.Response对象，如果所有重试都失败则返回None
     """
-    proxies = None
-    if use_proxy and config.HTTP_PROXY:
-        proxies = {
-            "http": config.HTTP_PROXY,
-            "https": config.HTTP_PROXY
-        }
-        print(f"[{datetime.datetime.now()}] 使用代理: {config.HTTP_PROXY}")
+    if max_retries < 1:
+        max_retries = 1
     
-    for retry_count in range(max_retries):
+    retry_count = 0
+    last_error = None
+    last_response = None
+    proxy = None
+    
+    # 设置代理
+    if use_proxy and hasattr(config, 'HTTP_PROXY') and config.HTTP_PROXY:
+        proxy = {
+            'http': config.HTTP_PROXY,
+            'https': config.HTTP_PROXY
+        }
+        print(f"[{datetime.datetime.now()}] 使用代理: {proxy}")
+    
+    while retry_count < max_retries:
         try:
-            if retry_count > 0:
-                print(f"[{datetime.datetime.now()}] 第{retry_count+1}次尝试请求: {url}")
+            # 记录当前重试次数
+            retry_count += 1
             
+            # 构建请求参数
+            request_kwargs = {
+                'timeout': timeout
+            }
+            
+            if params:
+                request_kwargs['params'] = params
+            if data:
+                request_kwargs['data'] = data
+            if json_data:
+                request_kwargs['json'] = json_data
+            if headers:
+                request_kwargs['headers'] = headers
+            if proxy:
+                request_kwargs['proxies'] = proxy
+            
+            # 发送请求
             if method.upper() == "GET":
-                response = requests.get(
-                    url, 
-                    headers=headers, 
-                    timeout=timeout,
-                    proxies=proxies
-                )
+                response = requests.get(url, **request_kwargs)
+            elif method.upper() == "POST":
+                response = requests.post(url, **request_kwargs)
             else:
-                response = requests.post(
-                    url, 
-                    headers=headers, 
-                    json=json_data, 
-                    timeout=timeout,
-                    proxies=proxies
-                )
+                raise ValueError(f"不支持的HTTP方法: {method}")
             
-            # 检查响应状态码
-            if response.status_code == 200:
-                return response
+            # 记录响应
+            last_response = response
+            
+            # 检查响应状态
+            if response.status_code >= 400:
+                # 尝试解析错误响应
+                try:
+                    error_data = response.json()
+                    error_code = error_data.get('code', 0)
+                    error_msg = error_data.get('message', '未知错误')
+                    print(f"[{datetime.datetime.now()}] 第{retry_count}次请求失败: HTTP状态码={response.status_code}, API错误码={error_code}, 错误信息={error_msg}")
+                    
+                    # 关键错误码 - 不需要重试的固定错误
+                    if error_code in [4021, 4019, 4015]:  # 申购已结束、商品已约满等
+                        print(f"[{datetime.datetime.now()}] 检测到固定错误，无需重试: 代码={error_code}, 信息={error_msg}")
+                        return {
+                            'error': True,
+                            'api_code': error_code,
+                            'message': error_msg,
+                            'status_code': response.status_code
+                        }
+                except:
+                    print(f"[{datetime.datetime.now()}] 第{retry_count}次请求失败: HTTP状态码={response.status_code}, 响应={response.text[:100]}")
+                
+                # 401错误 - 认证失败，通常是令牌问题
+                if response.status_code == 401:
+                    try:
+                        error_data = response.json()
+                        error_msg = error_data.get('message', '')
+                        print(f"[{datetime.datetime.now()}] 检测到认证错误 (401): {error_msg}")
+                        # 设备ID不一致错误 - 重要的特定错误消息
+                        if 'device id' in error_msg.lower() or 'inconsistency' in error_msg.lower():
+                            return {
+                                'error': True,
+                                'api_code': 401,
+                                'message': error_msg,
+                                'status_code': 401
+                            }
+                    except:
+                        pass
+                
+                # 茅台特定错误码 480
+                if response.status_code == 480:
+                    try:
+                        error_data = response.json()
+                        error_code = error_data.get('code', 0)
+                        error_msg = error_data.get('message', '未知错误')
+                        print(f"[{datetime.datetime.now()}] 检测到茅台特定错误 (480): 代码={error_code}, 信息={error_msg}")
+                        
+                        # 对特定错误直接返回，无需重试
+                        return {
+                            'error': True,
+                            'api_code': error_code,
+                            'message': error_msg,
+                            'status_code': 480
+                        }
+                    except:
+                        pass
+                
+                # 存储最后一个错误
+                last_error = f"HTTP错误: {response.status_code}"
+                
+                # 如果是最后一次重试，直接返回响应（即使有错误）
+                if retry_count >= max_retries:
+                    print(f"[{datetime.datetime.now()}] 达到最大重试次数 ({max_retries})，返回最后一个响应")
+                    return response
             else:
-                print(f"[{datetime.datetime.now()}] ⚠️ 请求失败: HTTP状态码 {response.status_code}")
-                if retry_count < max_retries - 1:
-                    retry_delay = 2 + random.uniform(0, 1)
-                    print(f"[{datetime.datetime.now()}] 等待 {retry_delay:.2f} 秒后重试...")
-                    time.sleep(retry_delay)
-                    continue
-        
-        except requests.exceptions.Timeout:
-            print(f"[{datetime.datetime.now()}] ⚠️ 请求超时 (尝试 {retry_count+1}/{max_retries})")
-            if retry_count < max_retries - 1:
-                retry_delay = 3 + random.uniform(0, 2)
-                print(f"[{datetime.datetime.now()}] 等待 {retry_delay:.2f} 秒后重试...")
-                time.sleep(retry_delay)
-                
-        except requests.exceptions.ConnectionError as e:
-            print(f"[{datetime.datetime.now()}] ⚠️ 连接错误: {str(e)} (尝试 {retry_count+1}/{max_retries})")
-            if retry_count < max_retries - 1:
-                retry_delay = 3 + random.uniform(0, 2)
-                print(f"[{datetime.datetime.now()}] 等待 {retry_delay:.2f} 秒后重试...")
-                time.sleep(retry_delay)
-                
-        except Exception as e:
-            print(f"[{datetime.datetime.now()}] ❌ 请求异常: {str(e)} (尝试 {retry_count+1}/{max_retries})")
-            if retry_count < max_retries - 1:
-                retry_delay = 2 + random.uniform(0, 1)
-                print(f"[{datetime.datetime.now()}] 等待 {retry_delay:.2f} 秒后重试...")
-                time.sleep(retry_delay)
+                # 检查API级别的错误
+                try:
+                    resp_json = response.json()
+                    api_code = resp_json.get('code')
+                    
+                    # 如果不是成功状态码
+                    if api_code != 2000 and api_code != 200:
+                        error_msg = resp_json.get('message', '未知API错误')
+                        print(f"[{datetime.datetime.now()}] API返回错误: 代码={api_code}, 信息={error_msg}")
+                        
+                        # 特定错误码处理 - 不需要重试的错误
+                        if api_code in [4021, 4019, 4015]:  # 申购已结束、商品已约满等
+                            print(f"[{datetime.datetime.now()}] 检测到固定API错误，无需重试: 代码={api_code}, 信息={error_msg}")
+                            return {
+                                'error': True,
+                                'api_code': api_code,
+                                'message': error_msg,
+                                'status_code': response.status_code
+                            }
+                            
+                        last_error = f"API错误: 代码={api_code}, 信息={error_msg}"
+                        
+                        # 继续重试，除非是最后一次
+                        if retry_count >= max_retries:
+                            print(f"[{datetime.datetime.now()}] 达到最大API重试次数，返回最后一个响应")
+                            return response
+                    else:
+                        # 成功响应
+                        return response
+                except Exception as json_err:
+                    # JSON解析错误，但HTTP状态码正常，仍然返回响应
+                    print(f"[{datetime.datetime.now()}] 响应JSON解析错误，但HTTP状态码正常: {json_err}")
+                    return response
+            
+            # 如果需要重试，等待一段时间
+            if retry_count < max_retries:
+                wait_time = min(2 ** retry_count, 10)  # 指数退避，最多等待10秒
+                print(f"[{datetime.datetime.now()}] 等待{wait_time}秒后重试...")
+                time.sleep(wait_time)
+            
+        except (requests.exceptions.RequestException, requests.exceptions.Timeout) as e:
+            last_error = str(e)
+            print(f"[{datetime.datetime.now()}] 第{retry_count}次请求异常: {last_error}")
+            
+            if retry_count < max_retries:
+                wait_time = min(2 ** retry_count, 10)
+                print(f"[{datetime.datetime.now()}] 等待{wait_time}秒后重试...")
+                time.sleep(wait_time)
     
     # 所有重试都失败
-    print(f"[{datetime.datetime.now()}] ❌ 请求失败，已尝试 {max_retries} 次")
-    return None
+    if last_response and last_response.status_code >= 400:
+        try:
+            error_data = last_response.json()
+            return {
+                'error': True,
+                'api_code': error_data.get('code', 0),
+                'message': error_data.get('message', '未知错误'),
+                'status_code': last_response.status_code
+            }
+        except:
+            pass
+    
+    # 返回具有详细错误信息的字典而不是None
+    print(f"[{datetime.datetime.now()}] 所有重试均失败，最后错误: {last_error}")
+    return {
+        'error': True,
+        'api_code': 0,
+        'message': last_error or '未知网络错误',
+        'status_code': last_response.status_code if last_response else 0
+    }
+
+def generate_device_id():
+    """
+    生成设备ID
+    
+    Returns:
+        随机生成的设备ID字符串
+    """
+    # 尝试使用全局headers中的device_id
+    if 'MT-Device-ID' in headers:
+        return headers['MT-Device-ID']
+    
+    # 否则生成一个新的UUID格式的设备ID
+    # 格式类似于: 2F2075D0-B66C-4287-A903-DBFF6358342A
+    device_id = str(uuid.uuid4()).upper()
+    print(f"[{datetime.datetime.now()}] 生成新的设备ID: {device_id}")
+    
+    return device_id
