@@ -76,14 +76,89 @@ userId: 2
 
 # 初始化请求头
 def init_headers(user_id: str = '1', token: str = '2', lat: str = '29.83826', lng: str = '119.74375'):
+    print(f"[{datetime.datetime.now()}] 初始化API请求头...")
+    
+    # 清空旧的headers
+    headers.clear()
+    
+    # 从header_context加载基本设置
     for k in header_context.strip().split("\n"):
+        if not k.strip():
+            continue
+            
         temp_l = k.split(': ')
-        dict.update(headers, {temp_l[0]: temp_l[1]})
-    dict.update(headers, {"userId": user_id})
-    dict.update(headers, {"MT-Token": token})
+        if len(temp_l) < 2:
+            print(f"[{datetime.datetime.now()}] ⚠️ 警告: 跳过无效的header行: {k}")
+            continue
+            
+        header_name = temp_l[0].strip()
+        header_value = temp_l[1].strip()
+        dict.update(headers, {header_name: header_value})
+    
+    # 添加关键认证和位置信息
+    if user_id:
+        dict.update(headers, {"userId": user_id})
+        print(f"[{datetime.datetime.now()}] 设置 userId: {user_id}")
+    else:
+        print(f"[{datetime.datetime.now()}] ⚠️ 警告: user_id为空")
+    
+    # 提取设备ID变量，默认使用时间戳生成的ID
+    device_id = f'MT-{int(time.time() * 1000)}-{random.randint(1000, 9999)}'
+    
+    # 从令牌中提取设备ID (如果token有效)
+    if token and token != '2':
+        try:
+            # 尝试解析JWT令牌
+            # JWT令牌由三部分组成，用.分隔: header.payload.signature
+            token_parts = token.split('.')
+            if len(token_parts) == 3:
+                # 解码payload部分（第二部分）
+                import base64
+                import json
+                
+                # 修正base64填充
+                payload = token_parts[1]
+                payload += '=' * (4 - len(payload) % 4) if len(payload) % 4 else ''
+                
+                try:
+                    # 尝试解码
+                    decoded_payload = base64.b64decode(payload).decode('utf-8')
+                    token_data = json.loads(decoded_payload)
+                    
+                    # 检查是否包含设备ID
+                    if 'deviceId' in token_data:
+                        device_id = token_data['deviceId']
+                        print(f"[{datetime.datetime.now()}] ✅ 从JWT令牌中提取到设备ID: {device_id}")
+                except Exception as e:
+                    print(f"[{datetime.datetime.now()}] ⚠️ JWT令牌解析失败: {str(e)}")
+        except Exception as e:
+            print(f"[{datetime.datetime.now()}] ⚠️ 处理令牌时出错: {str(e)}")
+        
+        # 设置令牌
+        dict.update(headers, {"MT-Token": token})
+        print(f"[{datetime.datetime.now()}] 设置 MT-Token: {token[:4]}...{token[-4:] if len(token) > 8 else token}")
+    else:
+        print(f"[{datetime.datetime.now()}] ⚠️ 警告: token无效或为默认值: {token}")
+        
+    # 更新位置信息
     dict.update(headers, {"MT-Lat": lat})
     dict.update(headers, {"MT-Lng": lng})
+    dict.update(headers, {"mt-lat": lat})  # 确保mt-lat也设置了（小写）
+    dict.update(headers, {"mt-lng": lng})  # 确保mt-lng也设置了（小写）
+    
+    # 更新版本信息
     dict.update(headers, {"MT-APP-Version": mt_version})
+    
+    # 更新请求ID，使用与设备ID匹配的格式
+    request_id = f'{int(time.time() * 1000)}{random.randint(1111111, 999999999)}'
+    
+    # 使用从令牌提取或生成的设备ID - 关键点
+    dict.update(headers, {"MT-Request-ID": request_id})
+    dict.update(headers, {"MT-Device-ID": device_id})
+    
+    # 打印关键认证信息
+    print(f"[{datetime.datetime.now()}] ✅ Headers初始化完成，关键字段: userId={headers.get('userId')}, MT-Token长度={len(headers.get('MT-Token', ''))}, 位置=[{lat},{lng}], 设备ID={device_id}")
+    return headers
 
 
 def signature(data: dict):
@@ -127,17 +202,61 @@ def login(mobile: str, v_code: str):
 
 # 获取当日的session id
 def get_current_session_id():
-    # print("===============get_current_session_id")
-    day_time = int(time.mktime(datetime.date.today().timetuple())) * 1000
-    my_url = f"https://static.moutai519.com.cn/mt-backend/xhr/front/mall/index/session/get/{day_time}"
-    # print(my_url)
-    responses = requests.get(my_url)
-    # print(responses.json())
-    if responses.status_code != 200:
-        logging.warning(
-            f'get_current_session_id : params : {day_time}, response code : {responses.status_code}, response body : {responses.text}')
-    current_session_id = responses.json()['data']['sessionId']
-    dict.update(headers, {'current_session_id': str(current_session_id)})
+    try:
+        print(f"[{datetime.datetime.now()}] 开始获取茅台商城会话ID...")
+        day_time = int(time.mktime(datetime.date.today().timetuple())) * 1000
+        my_url = f"https://static.moutai519.com.cn/mt-backend/xhr/front/mall/index/session/get/{day_time}"
+        print(f"[{datetime.datetime.now()}] 请求URL: {my_url}")
+        
+        responses = requests.get(my_url, timeout=15)
+        
+        if responses.status_code != 200:
+            error_msg = f"获取会话ID失败: HTTP状态码 {responses.status_code}, 响应: {responses.text}"
+            print(f"[{datetime.datetime.now()}] ❌ {error_msg}")
+            logging.warning(error_msg)
+            # 失败情况下，使用随机会话ID以便于调试
+            fallback_session_id = str(random.randint(10000, 99999))
+            dict.update(headers, {'current_session_id': fallback_session_id})
+            print(f"[{datetime.datetime.now()}] ⚠️ 使用备用会话ID: {fallback_session_id}")
+            return False
+        
+        try:
+            response_data = responses.json()
+            if response_data.get('code') == 2000:  # 成功的API状态码
+                current_session_id = str(response_data['data']['sessionId'])
+                dict.update(headers, {'current_session_id': current_session_id})
+                print(f"[{datetime.datetime.now()}] ✅ 成功获取会话ID: {current_session_id}")
+                return True
+            else:
+                error_msg = f"获取会话ID失败: API错误 {response_data.get('code')}, 信息: {response_data.get('message', '未知错误')}"
+                print(f"[{datetime.datetime.now()}] ❌ {error_msg}")
+                logging.warning(error_msg)
+                
+                # 失败情况下，使用随机会话ID以便于调试
+                fallback_session_id = str(random.randint(10000, 99999))
+                dict.update(headers, {'current_session_id': fallback_session_id})
+                print(f"[{datetime.datetime.now()}] ⚠️ 使用备用会话ID: {fallback_session_id}")
+                return False
+        except Exception as json_err:
+            error_msg = f"解析会话ID响应失败: {str(json_err)}, 响应内容: {responses.text}"
+            print(f"[{datetime.datetime.now()}] ❌ {error_msg}")
+            logging.warning(error_msg)
+            
+            # 失败情况下，使用随机会话ID以便于调试
+            fallback_session_id = str(random.randint(10000, 99999))
+            dict.update(headers, {'current_session_id': fallback_session_id})
+            print(f"[{datetime.datetime.now()}] ⚠️ 使用备用会话ID: {fallback_session_id}")
+            return False
+    except Exception as e:
+        error_msg = f"获取会话ID过程异常: {str(e)}"
+        print(f"[{datetime.datetime.now()}] ❌ {error_msg}")
+        logging.error(error_msg)
+        
+        # 失败情况下，使用随机会话ID以便于调试
+        fallback_session_id = str(random.randint(10000, 99999))
+        dict.update(headers, {'current_session_id': fallback_session_id})
+        print(f"[{datetime.datetime.now()}] ⚠️ 使用备用会话ID: {fallback_session_id}")
+        return False
 
 
 # 获取最近或者出货量最大的店铺
@@ -147,21 +266,96 @@ def get_location_count(province: str,
                        p_c_map: dict,
                        source_data: dict,
                        lat: str = '29.83826',
-                       lng: str = '102.182324'):
+                       lng: str = '102.182324',
+                       max_retries: int = 3):
+    """
+    获取店铺信息，带有重试机制
+    """
+    print(f"[{datetime.datetime.now()}] 开始获取店铺信息: 省份={province}, 城市={city}, 商品={item_code}")
+    
     day_time = int(time.mktime(datetime.date.today().timetuple())) * 1000
-    session_id = headers['current_session_id']
-    responses = requests.get(
-        f"https://static.moutai519.com.cn/mt-backend/xhr/front/mall/shop/list/slim/v3/{session_id}/{province}/{item_code}/{day_time}")
-    if responses.status_code != 200:
-        logging.warning(
-            f'get_location_count : params : {day_time}, response code : {responses.status_code}, response body : {responses.text}')
-    shops = responses.json()['data']['shops']
-
-    if config.RESERVE_RULE == 0:
-        return distance_shop(city, item_code, p_c_map, province, shops, source_data, lat, lng)
-
-    if config.RESERVE_RULE == 1:
-        return max_shop(city, item_code, p_c_map, province, shops)
+    session_id = headers.get('current_session_id')
+    
+    if not session_id:
+        print(f"[{datetime.datetime.now()}] ⚠️ 警告: 会话ID缺失")
+        return '0'
+    
+    # 构建请求URL
+    url = f"https://static.moutai519.com.cn/mt-backend/xhr/front/mall/shop/list/slim/v3/{session_id}/{province}/{item_code}/{day_time}"
+    print(f"[{datetime.datetime.now()}] 请求URL: {url}")
+    
+    # 使用request_url_with_retry函数获取响应
+    # 优先尝试不使用代理
+    response = request_url_with_retry(
+        url=url,
+        headers=headers, 
+        timeout=15,
+        max_retries=max_retries
+    )
+    
+    # 如果不使用代理失败，且配置了代理，则尝试使用代理
+    if response is None and hasattr(config, 'HTTP_PROXY') and config.HTTP_PROXY:
+        print(f"[{datetime.datetime.now()}] 不使用代理请求失败，尝试使用代理...")
+        response = request_url_with_retry(
+            url=url,
+            headers=headers, 
+            timeout=15,
+            max_retries=max_retries,
+            use_proxy=True
+        )
+    
+    # 如果请求失败，返回0
+    if response is None:
+        print(f"[{datetime.datetime.now()}] ❌ 获取店铺列表最终失败")
+        return '0'
+    
+    try:
+        # 解析响应
+        response_data = response.json()
+        if response_data.get('code') != 2000:
+            error_msg = f"获取店铺列表失败: API错误 {response_data.get('code')}, 信息: {response_data.get('message', '未知错误')}"
+            print(f"[{datetime.datetime.now()}] ❌ {error_msg}")
+            logging.warning(error_msg)
+            return '0'
+        
+        # 提取商店数据
+        shops = response_data['data']['shops']
+        shop_count = len(shops)
+        print(f"[{datetime.datetime.now()}] ✅ 成功获取店铺列表: {shop_count}个店铺")
+        
+        if shop_count == 0:
+            print(f"[{datetime.datetime.now()}] ⚠️ 店铺列表为空，无法选择店铺")
+            return '0'
+    
+        # 根据配置规则选择店铺
+        if config.RESERVE_RULE == 0:
+            shop_id = distance_shop(city, item_code, p_c_map, province, shops, source_data, lat, lng)
+            if shop_id != '0':
+                print(f"[{datetime.datetime.now()}] ✅ 已选择最近的店铺: {shop_id}")
+                return shop_id
+                
+        elif config.RESERVE_RULE == 1:
+            shop_id = max_shop(city, item_code, p_c_map, province, shops)
+            if shop_id != '0':
+                print(f"[{datetime.datetime.now()}] ✅ 已选择库存最多的店铺: {shop_id}")
+                return shop_id
+                
+        else:
+            # 默认使用距离规则
+            shop_id = distance_shop(city, item_code, p_c_map, province, shops, source_data, lat, lng)
+            if shop_id != '0':
+                print(f"[{datetime.datetime.now()}] ✅ 已选择最近的店铺: {shop_id}")
+                return shop_id
+                
+        # 所有规则都没有找到合适的店铺
+        print(f"[{datetime.datetime.now()}] ⚠️ 无法找到合适的店铺")
+        return '0'
+                
+    except Exception as e:
+        error_msg = f"解析店铺数据时出错: {str(e)}"
+        print(f"[{datetime.datetime.now()}] ❌ {error_msg}")
+        logging.error(error_msg)
+        return '0'
 
 
 # 获取距离最近的店铺
@@ -223,28 +417,72 @@ encrypt = Encrypt(key=AES_KEY, iv=AES_IV)
 
 
 def act_params(shop_id: str, item_id: str):
-    # {
-    #     "actParam": "a/v0XjWK/a/a+ZyaSlKKZViJHuh8tLw==",
-    #     "itemInfoList": [
-    #         {
-    #             "count": 1,
-    #             "itemId": "2478"
-    #         }
-    #     ],
-    #     "shopId": "151510100019",
-    #     "sessionId": 508
-    # }
-    session_id = headers['current_session_id']
-    userId = headers['userId']
-    params = {"itemInfoList": [{"count": 1, "itemId": item_id}],
-              "sessionId": int(session_id),
-              "userId": userId,
-              "shopId": shop_id
-              }
-    s = json.dumps(params)
-    act = encrypt.aes_encrypt(s)
-    params.update({"actParam": act})
-    return params
+    """
+    构建预约参数，包括加密参数
+    
+    Args:
+        shop_id: 店铺ID
+        item_id: 商品ID
+        
+    Returns:
+        构建好的预约参数字典
+    """
+    print(f"[{datetime.datetime.now()}] 开始构建预约参数: 店铺ID={shop_id}, 商品ID={item_id}")
+    
+    try:
+        # 检查必要的参数
+        if not shop_id or shop_id == '0':
+            print(f"[{datetime.datetime.now()}] ⚠️ 警告: 店铺ID无效: {shop_id}")
+            
+        if 'current_session_id' not in headers or not headers['current_session_id']:
+            print(f"[{datetime.datetime.now()}] ⚠️ 警告: 会话ID缺失，将使用随机ID")
+            # 生成一个随机会话ID以便继续
+            session_id = str(random.randint(100, 999))
+        else:
+            session_id = headers['current_session_id']
+            
+        if 'userId' not in headers or not headers['userId']:
+            print(f"[{datetime.datetime.now()}] ⚠️ 警告: 用户ID缺失")
+            userId = "0"
+        else:
+            userId = headers['userId']
+        
+        # 构建预约参数
+        params = {
+            "itemInfoList": [{"count": 1, "itemId": item_id}],
+            "sessionId": int(session_id),
+            "userId": userId,
+            "shopId": shop_id
+        }
+        
+        # 加密参数
+        s = json.dumps(params)
+        try:
+            act = encrypt.aes_encrypt(s)
+            print(f"[{datetime.datetime.now()}] 成功加密参数: 源长度={len(s)}字符, 加密后长度={len(act)}字符")
+        except Exception as encrypt_err:
+            print(f"[{datetime.datetime.now()}] ❌ 加密参数失败: {str(encrypt_err)}")
+            # 生成一个假的加密参数，用于调试，实际不会成功
+            act = "MOCK_ENCRYPTED_DATA_" + str(int(time.time()))
+            
+        # 添加加密参数到请求
+        params.update({"actParam": act})
+        
+        print(f"[{datetime.datetime.now()}] ✅ 预约参数构建完成")
+        return params
+    except Exception as e:
+        error_msg = f"构建预约参数失败: {str(e)}"
+        print(f"[{datetime.datetime.now()}] ❌ {error_msg}")
+        logging.error(error_msg)
+        
+        # 返回一个基本的参数以便继续调试
+        return {
+            "itemInfoList": [{"count": 1, "itemId": item_id}],
+            "sessionId": 999,
+            "shopId": shop_id,
+            "userId": "0",
+            "actParam": "MOCK_ENCRYPTED_DATA_ERROR"
+        }
 
 
 # 消息推送
@@ -259,25 +497,145 @@ def send_msg(title, content):
 
 
 # 核心代码，执行预约
-def reservation(params: dict, mobile: str):
-    params.pop('userId')
-    responses = requests.post("https://app.moutai519.com.cn/xhr/front/mall/reservation/add", json=params,
-                              headers=headers)
-    # if responses.status_code == 401:
-    #     send_msg('！！失败！！茅台预约', f'[{mobile}],登录token失效，需要重新登录')
-    #     raise RuntimeError
+def reservation(params: dict, mobile: str, max_retries: int = 3):
+    """
+    执行预约，支持重试机制
+    
+    Args:
+        params: 预约参数
+        mobile: 手机号
+        max_retries: 最大重试次数
+        
+    Returns:
+        (success, message): 预约结果
+    """
+    try:
+        # 移除userId参数，防止冲突
+        if 'userId' in params:
+            userId = params.pop('userId')
+            print(f"[{datetime.datetime.now()}] 移除params中的userId: {userId}")
+        
+        # 检查headers中是否包含必要的认证信息
+        if 'MT-Token' not in headers or not headers['MT-Token'] or headers['MT-Token'] == '2':
+            print(f"[{datetime.datetime.now()}] ⚠️ 警告: MT-Token无效或为默认值: {headers.get('MT-Token')}")
+        if 'userId' not in headers or not headers['userId'] or headers['userId'] == '1':
+            print(f"[{datetime.datetime.now()}] ⚠️ 警告: userId无效或为默认值: {headers.get('userId')}")
+        if 'current_session_id' not in headers or not headers['current_session_id']:
+            print(f"[{datetime.datetime.now()}] ⚠️ 警告: current_session_id缺失")
+        if 'MT-Device-ID' not in headers or not headers['MT-Device-ID']:
+            print(f"[{datetime.datetime.now()}] ⚠️ 警告: MT-Device-ID缺失")
+        
+        # 检查设备ID是否从令牌中提取
+        token = headers.get('MT-Token', '')
+        device_id = headers.get('MT-Device-ID', '')
+        
+        print(f"[{datetime.datetime.now()}] 设备ID检查: MT-Device-ID = {device_id}")
+        
+        # 打印请求信息
+        print(f"[{datetime.datetime.now()}] 预约请求参数: {json.dumps(params, ensure_ascii=False)}")
+        print(f"[{datetime.datetime.now()}] 请求头信息: userId={headers.get('userId', '缺失')}, MT-Token={headers.get('MT-Token', '缺失')[:4]}..., MT-Device-ID={headers.get('MT-Device-ID', '缺失')}")
 
-    msg = f'预约:{mobile};Code:{responses.status_code};Body:{responses.text};'
-    logging.info(msg)
+        # 发送请求
+        url = "https://app.moutai519.com.cn/xhr/front/mall/reservation/add"
+        print(f"[{datetime.datetime.now()}] 发送预约请求到茅台服务器: {url}")
+        
+        # 使用request_url_with_retry代替直接请求
+        response = request_url_with_retry(
+            url=url,
+            method="POST",
+            headers=headers,
+            json_data=params,
+            timeout=15,
+            max_retries=max_retries
+        )
+        
+        # 如果不使用代理失败，且配置了代理，则尝试使用代理
+        if response is None and hasattr(config, 'HTTP_PROXY') and config.HTTP_PROXY:
+            print(f"[{datetime.datetime.now()}] 不使用代理请求失败，尝试使用代理...")
+            response = request_url_with_retry(
+                url=url,
+                method="POST",
+                headers=headers,
+                json_data=params,
+                timeout=15,
+                max_retries=max_retries,
+                use_proxy=True
+            )
+        
+        # 如果请求失败
+        if response is None:
+            error_msg = "预约请求最终失败，请检查网络连接和API可用性"
+            print(f"[{datetime.datetime.now()}] ❌ {error_msg}")
+            return False, error_msg
+        
+        # 记录详细响应
+        try:
+            response_json = response.json()
+            print(f"[{datetime.datetime.now()}] 预约响应: 状态码={response.status_code}, 内容={json.dumps(response_json, ensure_ascii=False)}")
+            
+            # 特别处理设备ID不一致错误
+            if response.status_code == 401 and response_json.get('message') and 'device id inconsistency' in response_json.get('message'):
+                print(f"[{datetime.datetime.now()}] ❌ 设备ID不一致错误: 令牌中的设备ID与请求头中的设备ID不匹配")
+                print(f"[{datetime.datetime.now()}] 请确保使用了相同的设备ID：{device_id}")
+                
+                # 尝试解析JWT令牌中的deviceId
+                if token and len(token.split('.')) == 3:
+                    try:
+                        # 同上面的解析逻辑
+                        import base64
+                        import json
+                        
+                        token_parts = token.split('.')
+                        payload = token_parts[1]
+                        payload += '=' * (4 - len(payload) % 4) if len(payload) % 4 else ''
+                        
+                        decoded_payload = base64.b64decode(payload).decode('utf-8')
+                        token_data = json.loads(decoded_payload)
+                        
+                        if 'deviceId' in token_data:
+                            jwt_device_id = token_data['deviceId']
+                            print(f"[{datetime.datetime.now()}] JWT令牌中的设备ID: {jwt_device_id}")
+                            print(f"[{datetime.datetime.now()}] 请求头中的设备ID: {device_id}")
+                            print(f"[{datetime.datetime.now()}] 设备ID匹配: {'是' if jwt_device_id == device_id else '否'}")
+                    except Exception as jwt_err:
+                        print(f"[{datetime.datetime.now()}] 解析JWT令牌时出错: {jwt_err}")
+        except Exception as json_err:
+            print(f"[{datetime.datetime.now()}] 解析响应JSON时出错: {json_err}")
+            print(f"[{datetime.datetime.now()}] 预约响应: 状态码={response.status_code}, 内容={response.text}")
 
-    # 如果是成功，推送消息简化；失败消息则全量推送
-    if responses.status_code == 200:
-        r_success = True
-        msg = f'手机:{mobile};'
-    else:
-        r_success = False
+        # 详细日志信息
+        msg = f'预约:{mobile};Code:{response.status_code};Body:{response.text};'
+        logging.info(msg)
 
-    return r_success, msg
+        # 处理API响应
+        if response.status_code == 200:
+            response_data = response.json()
+            if response_data.get('code') == 2000:  # 成功的API状态码
+                r_success = True
+                msg = f'手机:{mobile};预约成功'
+                print(f"[{datetime.datetime.now()}] ✅ 预约成功: {mobile}")
+            else:
+                r_success = False
+                msg = f'预约失败: API状态码错误: {response_data.get("code")}, 信息: {response_data.get("message", "无错误信息")}'
+                print(f"[{datetime.datetime.now()}] ❌ 预约失败: {msg}")
+        else:
+            r_success = False
+            if response.status_code == 401:
+                try:
+                    error_data = response.json()
+                    msg = f'预约失败: 认证错误(401), 信息: {error_data.get("message", "设备ID不一致")}'
+                except:
+                    msg = f'预约失败: 认证错误(401), 响应: {response.text}'
+            else:
+                msg = f'预约失败: HTTP状态码: {response.status_code}, 响应: {response.text}'
+            print(f"[{datetime.datetime.now()}] ❌ 预约失败: HTTP错误 {response.status_code}")
+
+        return r_success, msg
+    except Exception as e:
+        error_msg = f"预约过程异常: {str(e)}"
+        print(f"[{datetime.datetime.now()}] ❌ 预约请求异常: {error_msg}")
+        logging.error(error_msg)
+        return False, error_msg
 
 
 # 用高德api获取地图信息
@@ -291,39 +649,128 @@ def select_geo(i: str):
     return geocodes
 
 
-def get_map(lat: str, lng: str):
+def get_map(lat: str, lng: str, max_retries: int = 3):
+    """
+    获取茅台店铺地图信息，支持重试和代理
+    
+    Args:
+        lat: 纬度
+        lng: 经度
+        max_retries: 最大重试次数
+        
+    Returns:
+        (p_c_map, source_data): 省市地图及店铺数据
+    """
+    print(f"[{datetime.datetime.now()}] 开始获取地图信息: 经度={lng}, 纬度={lat}")
+    
     p_c_map = {}
     url = 'https://static.moutai519.com.cn/mt-backend/xhr/front/mall/resource/get'
-    headers = {
+    
+    # 创建一个新的请求头字典，基于全局headers
+    map_headers = {
         'X-Requested-With': 'XMLHttpRequest',
-        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0_1 like Mac OS X)',
+        'User-Agent': headers.get('User-Agent', 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0_1 like Mac OS X)'),
         'Referer': 'https://h5.moutai519.com.cn/gux/game/main?appConfig=2_1_2',
-        'Client-User-Agent': 'iOS;16.0.1;Apple;iPhone 14 ProMax',
-        'MT-R': 'clips_OlU6TmFRag5rCXwbNAQ/Tz1SKlN8THcecBp/HGhHdw==',
+        'Client-User-Agent': headers.get('Client-User-Agent', 'iOS;16.0.1;Apple;iPhone 14 ProMax'),
+        'MT-R': headers.get('MT-R', 'clips_OlU6TmFRag5rCXwbNAQ/Tz1SKlN8THcecBp/HGhHdw=='),
         'Origin': 'https://h5.moutai519.com.cn',
         'MT-APP-Version': mt_version,
         'MT-Request-ID': f'{int(time.time() * 1000)}{random.randint(1111111, 999999999)}{int(time.time() * 1000)}',
         'Accept-Language': 'zh-CN,zh-Hans;q=1',
-        'MT-Device-ID': f'{int(time.time() * 1000)}{random.randint(1111111, 999999999)}{int(time.time() * 1000)}',
         'Accept': 'application/json, text/javascript, */*; q=0.01',
         'mt-lng': f'{lng}',
         'mt-lat': f'{lat}'
     }
-    res = requests.get(url, headers=headers, )
-    mtshops = res.json().get('data', {}).get('mtshops_pc', {})
-    urls = mtshops.get('url')
-    r = requests.get(urls)
-    for k, v in dict(r.json()).items():
-        provinceName = v.get('provinceName')
-        cityName = v.get('cityName')
-        if not p_c_map.get(provinceName):
-            p_c_map[provinceName] = {}
-        if not p_c_map[provinceName].get(cityName, None):
-            p_c_map[provinceName][cityName] = [k]
-        else:
-            p_c_map[provinceName][cityName].append(k)
-
-    return p_c_map, dict(r.json())
+    
+    # 保持设备ID一致性 - 使用全局headers中的设备ID
+    if 'MT-Device-ID' in headers:
+        map_headers['MT-Device-ID'] = headers['MT-Device-ID']
+        print(f"[{datetime.datetime.now()}] 使用一致的设备ID: {headers['MT-Device-ID']}")
+    else:
+        # 回退到随机设备ID
+        device_id = f'{int(time.time() * 1000)}{random.randint(1111111, 999999999)}{int(time.time() * 1000)}'
+        map_headers['MT-Device-ID'] = device_id
+        print(f"[{datetime.datetime.now()}] ⚠️ 警告: 未找到全局设备ID，使用新生成的设备ID: {device_id}")
+    
+    # 如果存在MT-Token，也复制过来保持一致性
+    if 'MT-Token' in headers:
+        map_headers['MT-Token'] = headers['MT-Token']
+    
+    # 使用request_url_with_retry函数获取响应
+    print(f"[{datetime.datetime.now()}] 发送获取地图信息请求: URL={url}")
+    response = request_url_with_retry(
+        url=url, 
+        headers=map_headers, 
+        timeout=15,
+        max_retries=max_retries
+    )
+    
+    # 如果不使用代理失败，且配置了代理，则尝试使用代理
+    if response is None and hasattr(config, 'HTTP_PROXY') and config.HTTP_PROXY:
+        print(f"[{datetime.datetime.now()}] 不使用代理请求失败，尝试使用代理...")
+        response = request_url_with_retry(
+            url=url,
+            headers=map_headers, 
+            timeout=15,
+            max_retries=max_retries,
+            use_proxy=True
+        )
+    
+    if response is None:
+        print(f"[{datetime.datetime.now()}] ❌ 获取地图信息最终失败")
+        return {}, {}
+    
+    try:
+        mtshops = response.json().get('data', {}).get('mtshops_pc', {})
+        if not mtshops:
+            print(f"[{datetime.datetime.now()}] ⚠️ 地图信息中未找到门店数据")
+            return {}, {}
+            
+        urls = mtshops.get('url')
+        if not urls:
+            print(f"[{datetime.datetime.now()}] ⚠️ 未找到门店URL")
+            return {}, {}
+        
+        # 获取门店详细信息
+        print(f"[{datetime.datetime.now()}] 获取门店详细信息: URL={urls}")
+        shop_response = request_url_with_retry(
+            url=urls, 
+            headers=map_headers, 
+            timeout=15,
+            max_retries=max_retries
+        )
+        
+        # 如果不使用代理失败，且配置了代理，则尝试使用代理
+        if shop_response is None and hasattr(config, 'HTTP_PROXY') and config.HTTP_PROXY:
+            print(f"[{datetime.datetime.now()}] 不使用代理请求门店详情失败，尝试使用代理...")
+            shop_response = request_url_with_retry(
+                url=urls,
+                headers=map_headers, 
+                timeout=15,
+                max_retries=max_retries,
+                use_proxy=True
+            )
+        
+        if shop_response is None:
+            print(f"[{datetime.datetime.now()}] ❌ 获取门店详细信息最终失败")
+            return {}, {}
+            
+        shop_data = shop_response.json()
+        for k, v in dict(shop_data).items():
+            provinceName = v.get('provinceName')
+            cityName = v.get('cityName')
+            if not p_c_map.get(provinceName):
+                p_c_map[provinceName] = {}
+            if not p_c_map[provinceName].get(cityName, None):
+                p_c_map[provinceName][cityName] = [k]
+            else:
+                p_c_map[provinceName][cityName].append(k)
+        
+        print(f"[{datetime.datetime.now()}] ✅ 成功获取地图信息: {len(p_c_map)}个省份, {len(shop_data)}个门店")
+        return p_c_map, dict(shop_data)
+    except Exception as e:
+        print(f"[{datetime.datetime.now()}] ❌ 处理地图数据时出错: {str(e)}")
+        raise  # 重新抛出异常，由调用方处理
 
 
 # 领取耐力和小茅运
@@ -563,3 +1010,84 @@ def get_headers():
     }
     
     return basic_headers
+
+def request_url_with_retry(url, method="GET", headers=None, json_data=None, timeout=15, max_retries=3, use_proxy=False):
+    """
+    发送HTTP请求，支持代理和重试机制
+    
+    Args:
+        url: 请求URL
+        method: HTTP方法，默认GET
+        headers: 请求头
+        json_data: POST请求的JSON数据
+        timeout: 超时时间(秒)
+        max_retries: 最大重试次数
+        use_proxy: 是否使用代理
+        
+    Returns:
+        响应对象或None(失败时)
+    """
+    proxies = None
+    if use_proxy and config.HTTP_PROXY:
+        proxies = {
+            "http": config.HTTP_PROXY,
+            "https": config.HTTP_PROXY
+        }
+        print(f"[{datetime.datetime.now()}] 使用代理: {config.HTTP_PROXY}")
+    
+    for retry_count in range(max_retries):
+        try:
+            if retry_count > 0:
+                print(f"[{datetime.datetime.now()}] 第{retry_count+1}次尝试请求: {url}")
+            
+            if method.upper() == "GET":
+                response = requests.get(
+                    url, 
+                    headers=headers, 
+                    timeout=timeout,
+                    proxies=proxies
+                )
+            else:
+                response = requests.post(
+                    url, 
+                    headers=headers, 
+                    json=json_data, 
+                    timeout=timeout,
+                    proxies=proxies
+                )
+            
+            # 检查响应状态码
+            if response.status_code == 200:
+                return response
+            else:
+                print(f"[{datetime.datetime.now()}] ⚠️ 请求失败: HTTP状态码 {response.status_code}")
+                if retry_count < max_retries - 1:
+                    retry_delay = 2 + random.uniform(0, 1)
+                    print(f"[{datetime.datetime.now()}] 等待 {retry_delay:.2f} 秒后重试...")
+                    time.sleep(retry_delay)
+                    continue
+        
+        except requests.exceptions.Timeout:
+            print(f"[{datetime.datetime.now()}] ⚠️ 请求超时 (尝试 {retry_count+1}/{max_retries})")
+            if retry_count < max_retries - 1:
+                retry_delay = 3 + random.uniform(0, 2)
+                print(f"[{datetime.datetime.now()}] 等待 {retry_delay:.2f} 秒后重试...")
+                time.sleep(retry_delay)
+                
+        except requests.exceptions.ConnectionError as e:
+            print(f"[{datetime.datetime.now()}] ⚠️ 连接错误: {str(e)} (尝试 {retry_count+1}/{max_retries})")
+            if retry_count < max_retries - 1:
+                retry_delay = 3 + random.uniform(0, 2)
+                print(f"[{datetime.datetime.now()}] 等待 {retry_delay:.2f} 秒后重试...")
+                time.sleep(retry_delay)
+                
+        except Exception as e:
+            print(f"[{datetime.datetime.now()}] ❌ 请求异常: {str(e)} (尝试 {retry_count+1}/{max_retries})")
+            if retry_count < max_retries - 1:
+                retry_delay = 2 + random.uniform(0, 1)
+                print(f"[{datetime.datetime.now()}] 等待 {retry_delay:.2f} 秒后重试...")
+                time.sleep(retry_delay)
+    
+    # 所有重试都失败
+    print(f"[{datetime.datetime.now()}] ❌ 请求失败，已尝试 {max_retries} 次")
+    return None

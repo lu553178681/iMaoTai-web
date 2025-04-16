@@ -23,6 +23,11 @@ CREDENTIALS_PATH = os.getenv('CREDENTIALS_PATH', None)  # 可以自定义凭证�
 # 加密密钥
 AES_KEY = os.getenv('AES_KEY', 'i_am_the_key_of_maotai')  # AES加密密钥
 
+# HTTP代理配置
+# 格式: 'http://user:pass@host:port' 或 'http://host:port'
+# 如果API请求失败，系统会尝试使用此代理进行重试
+HTTP_PROXY = os.getenv('HTTP_PROXY', '') 
+
 # 茅台API配置（模拟）
 MT_API_BASE = 'https://app.i-maotai.com'
 MT_API_VERSION = 'v1'

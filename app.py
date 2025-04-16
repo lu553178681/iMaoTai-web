@@ -639,13 +639,16 @@ def edit_task(task_id):
 
 def real_reservation(task):
     """实际预约过程，使用茅台账号信息调用预约API"""
+    print(f"\n[{datetime.datetime.now()}] ==== 开始执行实际预约过程 ==== ")
     # 获取任务关联的茅台账号
     account = MaotaiAccount.query.filter_by(id=task.mt_account_id).first()
     
     if not account:
+        print(f"[{datetime.datetime.now()}] 预约失败: 找不到关联的茅台账号")
         return False, "预约失败: 找不到关联的茅台账号"
     
     if not account.is_active:
+        print(f"[{datetime.datetime.now()}] 预约失败: 账号已被禁用")
         return False, "预约失败: 账号已被禁用"
     
     # 解密敏感信息
@@ -656,22 +659,57 @@ def real_reservation(task):
         # 解密手机号和用户ID
         mobile = privateCrypt.decrypt_aes_ecb(account.mobile, key)
         user_id = privateCrypt.decrypt_aes_ecb(account.userid, key)
+        
+        print(f"[{datetime.datetime.now()}] 解密账号信息成功: 手机号={mobile[:3]}****{mobile[-4:]}, 用户ID={user_id}")
     except Exception as e:
+        print(f"[{datetime.datetime.now()}] 解密账号信息出错: {str(e)}")
         return False, f"预约失败: 解密账号信息出错 - {str(e)}"
     
     # 调用预约API
     try:
         # 初始化headers
-        process.init_headers()
+        print(f"[{datetime.datetime.now()}] 初始化headers: token={account.token}")
+        process.init_headers(user_id=user_id, token=account.token, lat=account.lat, lng=account.lng)
         
+        # 检查headers是否包含必要的信息
+        required_headers = ["userId", "MT-Token", "MT-Lat", "MT-Lng", "MT-APP-Version"]
+        for header in required_headers:
+            if header not in process.headers or not process.headers[header]:
+                print(f"[{datetime.datetime.now()}] 警告: 缺少必要的header: {header}={process.headers.get(header, '缺失')}")
+        
+        # 获取当前会话ID
+        print(f"[{datetime.datetime.now()}] 获取当前会话ID")
+        process.get_current_session_id()
+        print(f"[{datetime.datetime.now()}] 会话ID: {process.headers.get('current_session_id', '未获取')}")
+        
+        if 'current_session_id' not in process.headers or not process.headers['current_session_id']:
+            print(f"[{datetime.datetime.now()}] 错误: 未能获取会话ID，预约将失败")
+            return False, f"预约失败: 未能获取会话ID"
+        
+        # 获取地图信息
+        print(f"[{datetime.datetime.now()}] 获取地图信息: 经度={account.lng}, 纬度={account.lat}")
+        try:
+            p_c_map, source_data = process.get_map(lat=account.lat, lng=account.lng)
+            
+            if not p_c_map or len(p_c_map) == 0:
+                print(f"[{datetime.datetime.now()}] 错误: 未能获取地图信息，预约将失败")
+                return False, f"预约失败: 未能获取地图信息"
+                
+            print(f"[{datetime.datetime.now()}] 获取地图信息成功: 包含{len(p_c_map) if p_c_map else 0}个省份数据")
+        except Exception as map_err:
+            print(f"[{datetime.datetime.now()}] 错误: 获取地图信息失败: {str(map_err)}")
+            return False, f"预约失败: 获取地图信息出错 - {str(map_err)}"
+
         # 获取该任务关联的所有商品
         item_mappings = TaskItemMapping.query.filter_by(task_id=task.id).all()
-        
+
         # 如果没有找到映射，则使用任务自身的item_code（向后兼容）
         if not item_mappings:
             item_codes = [task.item_code]
         else:
             item_codes = [mapping.item_code for mapping in item_mappings]
+        
+        print(f"[{datetime.datetime.now()}] 准备预约商品: {item_codes}")
         
         # 记录预约结果
         all_success = True
@@ -679,46 +717,102 @@ def real_reservation(task):
         
         # 遍历所有商品进行预约
         for item_code in item_codes:
-            # 这里可以调用真实的预约接口，传入item_code
-            # 暂时使用模拟接口
-            success = random.choice([True, False, True, True])
+            item_success = False
+            item_message = "未知错误"
+            item_name = item_code # 默认商品名称
             
-            # 更新任务最后运行时间
-            task.last_run = datetime.datetime.now()
-            
-            # 创建预约记录
-            status = '成功' if success else '失败'
-            reservation = Reservation(
-                user_id=task.user_id,
-                item_code=item_code,
-                status=status,
-                reserve_time=datetime.datetime.now(),
-                mt_account_id=task.mt_account_id
-            )
-            
-            db.session.add(reservation)
-            if not success:
-                all_success = False
-            
-            # 获取商品名称，优先使用ITEM_CONFIG中的配置
-            item_name = item_code
-            if item_code in config.ITEM_CONFIG:
-                item_name = config.ITEM_CONFIG[item_code]['name']
-            elif item_code in config.ITEM_MAP:
-                item_name = config.ITEM_MAP[item_code]
+            try:
+                # 获取商品名称，优先使用ITEM_CONFIG中的配置
+                if item_code in config.ITEM_CONFIG:
+                    item_name = config.ITEM_CONFIG[item_code]['name']
+                elif item_code in config.ITEM_MAP:
+                    item_name = config.ITEM_MAP[item_code]
                 
-            results.append(f"{item_name}: {'成功' if success else '失败'}")
-        
+                print(f"[{datetime.datetime.now()}] 开始预约商品: {item_name}({item_code})")
+                
+                # 查找店铺ID
+                print(f"[{datetime.datetime.now()}] 查找店铺ID: 省份={account.province}, 城市={account.city}")
+                shop_id = process.get_location_count(
+                    province=account.province,
+                    city=account.city,
+                    item_code=item_code,
+                    p_c_map=p_c_map,
+                    source_data=source_data,
+                    lat=account.lat,
+                    lng=account.lng
+                )
+                print(f"[{datetime.datetime.now()}] 找到店铺ID: {shop_id}")
+                
+                if not shop_id or shop_id == '0':
+                    item_message = f"商品 {item_name}({item_code}) 未找到合适的预约店铺"
+                    print(f"[{datetime.datetime.now()}] {item_message}")
+                    results.append(f"{item_name}: 失败 ({item_message})")
+                    all_success = False
+                    continue # 跳过此商品的预约
+
+                # 调用真实的预约接口
+                print(f"[{datetime.datetime.now()}] 构建预约参数: shop_id={shop_id}, item_id={item_code}")
+                params = process.act_params(shop_id, item_code)
+                print(f"[{datetime.datetime.now()}] 预约参数: {params}")
+                
+                # 执行实际预约
+                print(f"[{datetime.datetime.now()}] 执行预约请求")
+                success, msg = process.reservation(params, mobile)
+                print(f"[{datetime.datetime.now()}] 预约结果: 成功={success}, 消息={msg}")
+                
+                item_success = success
+                item_message = msg if success else f"失败 ({msg})"
+                
+                # 更新任务最后运行时间 (仅当至少有一个商品成功或失败时更新)
+                task.last_run = datetime.datetime.now()
+
+                # 创建预约记录
+                status = '成功' if success else '失败'
+                reservation = Reservation(
+                    user_id=task.user_id,
+                    item_code=item_code,
+                    status=status,
+                    reserve_time=datetime.datetime.now(),
+                    mt_account_id=task.mt_account_id
+                )
+                db.session.add(reservation)
+                
+                if not success:
+                    all_success = False
+                
+                results.append(f"{item_name}: {status}")
+                
+            except Exception as item_e:
+                item_message = f"商品 {item_name}({item_code}) 预约过程中出错: {str(item_e)}"
+                print(f"[{datetime.datetime.now()}] {item_message}")
+                # 记录失败结果
+                results.append(f"{item_name}: 失败 ({item_message})")
+                all_success = False
+                
+                # 即使单个商品失败，也尝试创建失败的预约记录
+                try:
+                    failed_reservation = Reservation(
+                        user_id=task.user_id,
+                        item_code=item_code,
+                        status='失败',
+                        reserve_time=datetime.datetime.now(),
+                        mt_account_id=task.mt_account_id
+                    )
+                    db.session.add(failed_reservation)
+                except Exception as db_err:
+                    print(f"[{datetime.datetime.now()}] 记录失败预约时出错: {db_err}")
+
         db.session.commit()
-        
+        print(f"[{datetime.datetime.now()}] 数据库记录已提交")
+
         result_message = "，".join(results)
-        message_title = "【成功】茅台预约" if all_success else "【部分成功】茅台预约"
-        
+        message_title = "【成功】茅台预约" if all_success else "【部分成功/失败】茅台预约"
+
         # 构建推送内容
         user = User.query.get(task.user_id)
         username = user.username if user else "未知用户"
         formatted_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
+
         message_content = f"""
 用户: {username}
 预约时间: {formatted_time}
@@ -726,19 +820,29 @@ def real_reservation(task):
 商品结果:
 {chr(10).join(results)}
         """
-        
+
         # 发送消息推送
+        print(f"[{datetime.datetime.now()}] 发送消息推送")
         push_success = False
         if config.PUSH_TOKEN:
+            print(f"[{datetime.datetime.now()}] 尝试通过PushPlus推送")
             push_success = send_message.send_pushplus(config.PUSH_TOKEN, message_title, message_content)
         if not push_success and config.DINGTALK_WEBHOOK:
+            print(f"[{datetime.datetime.now()}] 尝试通过钉钉推送")
             send_message.send_webhook(config.DINGTALK_WEBHOOK, message_title, message_content)
         if config.SCKEY:
+            print(f"[{datetime.datetime.now()}] 尝试通过ServerChan推送")
             send_message.send_server_chan(config.SCKEY, message_title, message_content)
-        
+
+        print(f"[{datetime.datetime.now()}] ==== 预约过程结束: 全部成功={all_success} ====\n")
         return all_success, f"预约结果: {result_message}"
-        
+
     except Exception as e:
+        # 记录更详细的错误日志
+        import traceback
+        print(f"[{datetime.datetime.now()}] real_reservation 函数出错: {e}")
+        traceback.print_exc() 
+        
         error_msg = f"预约过程出错: {str(e)}"
         # 发送错误消息推送
         push_success = False
@@ -748,6 +852,8 @@ def real_reservation(task):
             send_message.send_webhook(config.DINGTALK_WEBHOOK, "【失败】茅台预约", error_msg)
         if config.SCKEY:
             send_message.send_server_chan(config.SCKEY, "【失败】茅台预约", error_msg)
+            
+        print(f"[{datetime.datetime.now()}] ==== 预约过程异常结束 ====\n")
         return False, error_msg
 
 # 修改任务后台线程
@@ -1547,7 +1653,8 @@ def find_nearest_shop():
             })
             
         # 查找最近的店铺
-        shop_id = process.get_nearest_shop(shop_result['shops'], lat, lng)
+        p_c_map, shop_data = process.get_map(account.lat, account.lng)
+        shop_id = process.distance_shop(account.city, item_id, p_c_map, account.province, shop_result['shops'], shop_data, account.lat, account.lng)
         
         if shop_id:
             return jsonify({
