@@ -5,68 +5,36 @@ import json
 import requests
 
 
-def send_server_chan(sckey, title, desp, text_type='markdown'):
+def send_server_chan(sckey, title, desp):
     """
     server酱推送
     :param sckey: server酱推送的key
     :param title: 标题
     :param desp: 内容
-    :param text_type: 内容类型，默认为markdown
-    :return: 是否成功
+    :return:
     """
-    if not sckey:
-        logging.warning("server酱 KEY 没有配置,不推送消息")
-        return False
-        
-    url = f"https://sctapi.ftqq.com/{sckey}.send"
-    data = {
-        "title": title, 
-        "desp": desp,
-        "channel": "9",   # 使用默认通道
-        "openid": ""      # 留空使用默认openid
-    }
-    
-    logging.info(f"正在发送Server酱推送，title: {title}")
-    
-    try:
-        response = requests.post(url, data=data, timeout=10)
-        resp_json = response.json()
-        
-        if response.status_code == 200 and resp_json.get('code') == 0:
+    if sckey:
+        url = f"https://sctapi.ftqq.com/{sckey}.send"
+        data = {"title": title, "desp": desp}
+        response = requests.post(url, data=data)
+        if response.json()['data']['error'] == 'SUCCESS':
             logging.info('Server酱 Turbo版推送成功')
-            return True
         else:
-            error_message = resp_json.get('message', '未知错误')
-            logging.warning(f'Server酱 Turbo版推送失败: {error_message}')
-            return False
-    except Exception as e:
-        logging.error(f'Server酱推送异常: {str(e)}')
-        return False
+            logging.info('Server酱 Turbo版推送失败')
+    else:
+        logging.warning("server酱 KEY 没有配置,不推送消息")
 
 
-def send_pushplus(token, title, content, template='markdown'):
-    """
-    使用pushplus推送消息
-    
-    Args:
-        token: pushplus令牌
-        title: 消息标题
-        content: 消息内容
-        template: 消息模板，默认为markdown
-    
-    Returns:
-        是否成功推送
-    """
+def send_pushplus(token, title, content):
     if not token:
         logging.warning("pushplus TOKEN 没有配置或为空，不推送消息")
-        return False
+        return
     
     url = 'https://www.pushplus.plus/send'
     data = {
         "token": token,
         "title": title,
-        "content": content,
-        "template": template  # 使用markdown格式支持富文本展示
+        "content": content
     }
     
     logging.info(f"正在发送PushPlus推送，token: {token[:4]}****{token[-4:] if len(token) > 8 else ''}")

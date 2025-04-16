@@ -753,9 +753,10 @@ def real_reservation(task):
                 print(f"[{datetime.datetime.now()}] 找到店铺ID: {shop_id}")
                 
                 if not shop_id or shop_id == '0':
-                    item_message = f"商品 {item_name}({item_code}) 未找到合适的预约店铺"
+                    item_message = f"未找到合适的预约店铺"
+                    error_code = "0000"
                     print(f"[{datetime.datetime.now()}] {item_message}")
-                    results.append(f"{item_name}: 失败 ({item_message})")
+                    results.append(f"【失败】{item_name}    【代码&原因】{error_code}-{item_message}")
                     all_success = False
                     continue # 跳过此商品的预约
 
@@ -770,7 +771,6 @@ def real_reservation(task):
                 print(f"[{datetime.datetime.now()}] 预约结果: 成功={success}, 消息={msg}")
                 
                 item_success = success
-                item_message = msg if success else f"失败 ({msg})"
                 
                 # 更新任务最后运行时间 (仅当至少有一个商品成功或失败时更新)
                 task.last_run = datetime.datetime.now()
@@ -786,16 +786,46 @@ def real_reservation(task):
                 )
                 db.session.add(reservation)
                 
+                # 解析错误代码和原因
+                error_code = "0000"
+                error_reason = "未知错误"
+                
                 if not success:
                     all_success = False
-                
-                results.append(f"{item_name}: {status}")
+                    # 尝试从消息中提取错误代码和原因
+                    if "申购已结束" in msg:
+                        error_code = "4021"
+                        error_reason = "申购已结束，请明天再来"
+                    elif "device id inconsistency" in msg:
+                        error_code = "4011"
+                        error_reason = "设备ID不一致"
+                    elif "已申购过" in msg:
+                        error_code = "4031"
+                        error_reason = "已申购过该商品"
+                    elif "库存不足" in msg:
+                        error_code = "4041"
+                        error_reason = "库存不足"
+                    else:
+                        # 尝试从消息中提取错误代码
+                        import re
+                        code_match = re.search(r'代码=(\d+)', msg)
+                        if code_match:
+                            error_code = code_match.group(1)
+                        # 使用原始消息作为原因
+                        error_reason = msg.replace("预约失败: ", "").strip()
+                    
+                    # 格式化失败结果
+                    results.append(f"【失败】{item_name}    【代码&原因】{error_code}-{error_reason}")
+                else:
+                    # 格式化成功结果
+                    results.append(f"【成功】{item_name}")
                 
             except Exception as item_e:
-                item_message = f"商品 {item_name}({item_code}) 预约过程中出错: {str(item_e)}"
-                print(f"[{datetime.datetime.now()}] {item_message}")
+                error_code = "9999"
+                error_reason = f"预约过程中出错: {str(item_e)}"
+                print(f"[{datetime.datetime.now()}] 商品 {item_name}({item_code}) {error_reason}")
                 # 记录失败结果
-                results.append(f"{item_name}: 失败 ({item_message})")
+                results.append(f"【失败】{item_name}    【代码&原因】{error_code}-{error_reason}")
                 all_success = False
                 
                 # 即使单个商品失败，也尝试创建失败的预约记录
@@ -822,12 +852,11 @@ def real_reservation(task):
         username = user.username if user else "未知用户"
         formatted_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        message_content = f"""
-用户: {username}
-预约时间: {formatted_time}
-账号: {mobile[:3]}****{mobile[-4:]}
-商品结果:
-{chr(10).join(results)}
+        # 按照要求格式化推送内容
+        message_content = f"""用户: {username} 
+预约时间: {formatted_time} 
+账号: {mobile[:3]}****{mobile[-4:]} 
+商品结果: {chr(10).join(results)}
         """
 
         # 发送消息推送
