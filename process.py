@@ -23,27 +23,6 @@ SALT = '2af72f100c356273d46284f6fd1dfc08'
 CURRENT_TIME = str(int(time.time() * 1000))
 headers = {}
 
-'''
-# 获取茅台APP的版本号，暂时没找到接口，采用爬虫曲线救国
-# 用bs获取指定的class更稳定，之前的正则可能需要经常改动
-def get_mt_version():
-    # apple商店 i茅台 url
-    apple_imaotai_url = "https://apps.apple.com/cn/app/i%E8%8C%85%E5%8F%B0/id1600482450"
-    response = requests.get(apple_imaotai_url)
-    # 用网页自带的编码反解码，防止中文乱码
-    response.encoding = response.apparent_encoding
-    html_text = response.text
-    soup = BeautifulSoup(html_text, "html.parser")
-    elements = soup.find_all(class_="whats-new__latest__version")
-    # 获取p标签内的文本内容
-    version_text = elements[0].text
-    # 这里先把没有直接替换"版本 "，因为后面不知道空格会不会在，所以先替换文字，再去掉前后空格
-    latest_mt_version = version_text.replace("版本", "").strip()
-    return latest_mt_version
-
-
-mt_version = get_mt_version()
-'''
 # 通过ios应用商店的api获取最新版本
 mt_version = json.loads(requests.get('https://itunes.apple.com/cn/lookup?id=1600482450').text)['results'][0]['version']
 

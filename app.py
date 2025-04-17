@@ -4,8 +4,7 @@ from flask_wtf import FlaskForm
 from wtforms import StringField, PasswordField, SubmitField, SelectField, BooleanField, TimeField, HiddenField, TextAreaField, SelectMultipleField, widgets
 from wtforms.validators import DataRequired, Length, EqualTo, ValidationError, Regexp, Optional
 import os
-# 导入修复程序
-import fix_flask_login
+# 移除了对fix_flask_login的依赖，使用标准Flask-Login实现
 import config
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -105,12 +104,24 @@ def register():
         
     form = RegistrationForm()
     if form.validate_on_submit():
-        user = User(username=form.username.data)
-        user.set_password(form.password.data)
-        db.session.add(user)
-        db.session.commit()
-        flash('账号创建成功，请登录!', 'success')
-        return redirect(url_for('login'))
+        # 先检查用户名是否已存在
+        existing_user = User.query.filter_by(username=form.username.data).first()
+        if existing_user:
+            flash('用户名已被使用，请选择其他用户名', 'danger')
+            return render_template('register.html', form=form)
+            
+        try:
+            user = User(username=form.username.data)
+            user.set_password(form.password.data)
+            db.session.add(user)
+            db.session.commit()
+            flash('账号创建成功，请登录!', 'success')
+            return redirect(url_for('login'))
+        except Exception as e:
+            db.session.rollback()
+            print(f"注册用户时出错: {str(e)}")
+            flash('注册失败，请稍后再试', 'danger')
+            
     return render_template('register.html', form=form)
 
 class LoginForm(FlaskForm):

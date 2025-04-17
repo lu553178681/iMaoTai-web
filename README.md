@@ -1,4 +1,4 @@
-# i茅台预约工具----GitHub Actions版
+# i茅台预约工具——Web界面版
 
 <p align="center">
   <a href="https://hits.seeyoufarm.com">
@@ -23,19 +23,23 @@
 
 
 ### 功能：
-- [x] 集成Github Actions
-- [x] 多账号配置
-- [x] 账号有效期管控
+- [x] 网页界面操作
+- [x] 多账号管理
+- [x] 自动调度任务
+- [x] 多商品同时预约
 - [x] 手机号加密保存
 - [x] 自动获取app版本
-- [x] 微信消息推送
+- [x] 多种消息推送方式
+- [x] 自动领取耐力和小茅运
 
 ### 原理：
 ```shell
 1、登录获取验证码
 2、输入验证码获取TOKEN
 3、获取当日SESSION ID
-4、根据配置文件预约CONFIG文件中，所在城市的i茅台商品
+4、根据地理位置信息预约附近门店的i茅台商品
+5、自动获取最新的商品列表
+6、自动执行预约任务
 ```
 
 
@@ -46,40 +50,44 @@
 pip3 install --no-cache-dir -r requirements.txt
 ```
 
-### 2、修改config.py，按照你的需求修改相关配置，这里很重要，建议每个配置项都详细阅读。
+### 2、修改config.py或.env文件
+按照你的需求修改相关配置，这里很重要，建议每个配置项都详细阅读。
 
-
-### 3、按提示输入 预约位置、手机号、验证码 等，生成的token等。很长时间不再需要登录。支持多账号，支持加密。
-1. 第一次使用先清空`./myConfig/credentials`中的信息，或者直接删除`credentials`文件也可以
-2. 再去配置环境变量 `GAODE_KEY`,再运行`login.py`.
+### 3、启动Web服务
 ```shell
-python3 login.py
-# 都选择完之后可以去./myConfig/credentials中查看
+python3 app.py
 ```
+启动后，访问`http://localhost:5000`即可使用Web界面进行所有操作。
 
-### 4、python3 main.py ,执行预约操作
-```shell
-python3 main.py
-```
+### 4、Web界面功能
+- **账号管理**：添加、编辑、删除i茅台账号
+- **预约任务**：创建、编辑、禁用预约任务
+- **预约记录**：查看历史预约记录和结果
+- **消息推送**：配置多种推送方式
+- **系统配置**：Web界面修改系统配置
 
-### 5、配置 Github actions，每日自动预约，省去自己买服务器的成本。
-- 先Fork本项目，再去自己的项目中配置`PUSHPLUS_KEY`和和`PRIVATE_AES_KEY`
+### 5、配置消息推送
+支持以下几种消息推送方式：
+- PushPlus
+- ServerChan
+- 钉钉机器人
 
-#### 欢迎请我喝咖啡（O.o），对我下班和周末时光的努力进行肯定，您的赞赏将会给我带来更多动力。或者动动小手点个小星星
+### 6、自动调度系统
+系统内置了自动调度器，会在后台自动执行预约任务，无需额外配置。
 
-<img src="resources/imgs/wxqr.png" height="300">  <img src="resources/imgs/zfbqr.jpg" height="300">
+## Web界面预览
+![Web界面预览](resources/imgs/web_preview.jpg)
 
-#### 感谢老板赞赏，排名不分先后
+## 多商品选择功能
+现在系统支持同时预约多个商品，您可以在Web界面上选择多个商品进行预约：
 
-- *minal
-- *hoty
-- 佚名
-- *宇
-- *wang
-- *LiuLiang
-- *辉
-- *困
-- *ame
+1. **创建自动预约任务**:
+   - 在创建自动预约任务时，您可以选择多个商品
+   - 系统会为所选商品创建预约任务
+
+2. **账号关联**:
+   - 每个预约任务都可以关联特定的i茅台账号
+   - 可以为不同账号创建不同的预约任务
 
 ## 特别感谢
 技术思路：https://blog.csdn.net/weixin_47481826/article/details/128893239
