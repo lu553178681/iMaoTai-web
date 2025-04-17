@@ -792,27 +792,50 @@ def real_reservation(task):
                 
                 if not success:
                     all_success = False
-                    # 尝试从消息中提取错误代码和原因
-                    if "申购已结束" in msg:
-                        error_code = "4021"
-                        error_reason = "申购已结束，请明天再来"
-                    elif "device id inconsistency" in msg:
-                        error_code = "4011"
-                        error_reason = "设备ID不一致"
-                    elif "已申购过" in msg:
-                        error_code = "4031"
-                        error_reason = "已申购过该商品"
-                    elif "库存不足" in msg:
-                        error_code = "4041"
-                        error_reason = "库存不足"
-                    else:
-                        # 尝试从消息中提取错误代码
-                        import re
-                        code_match = re.search(r'代码=(\d+)', msg)
-                        if code_match:
-                            error_code = code_match.group(1)
-                        # 使用原始消息作为原因
-                        error_reason = msg.replace("预约失败: ", "").strip()
+                    
+                    # 检查是否有API错误代码
+                    api_error_code = ""
+                    api_error_message = ""
+                    
+                    # 首先检查是否包含完整的错误信息格式
+                    import re
+                    code_msg_match = re.search(r'代码=(\d+), 信息=(.*?)(?:$|,|;)', msg)
+                    if code_msg_match:
+                        api_error_code = code_msg_match.group(1)
+                        api_error_message = code_msg_match.group(2).strip()
+                        
+                        error_code = api_error_code
+                        error_reason = api_error_message
+                    # 其次检查是否有API代码但没有完整信息
+                    elif ":" in msg and "code=" in msg:
+                        try:
+                            code_match = re.search(r'code=(\d+)', msg)
+                            if code_match:
+                                api_error_code = code_match.group(1)
+                                error_code = api_error_code
+                        except Exception:
+                            pass
+                    
+                    # 如果没有提取到完整的错误信息，根据消息内容判断
+                    if not api_error_message:
+                        if "申购已结束" in msg:
+                            error_code = "4021" if not api_error_code else api_error_code
+                            error_reason = "申购已结束，请明天再来"
+                        elif "device id inconsistency" in msg:
+                            error_code = "4011" if not api_error_code else api_error_code
+                            error_reason = "设备ID不一致"
+                        elif "已申购过" in msg:
+                            error_code = "4031" if not api_error_code else api_error_code
+                            error_reason = "已申购过该商品"
+                        elif "库存不足" in msg:
+                            error_code = "4041" if not api_error_code else api_error_code
+                            error_reason = "库存不足"
+                        elif "ianus" in msg.lower():
+                            error_code = "4011" if not api_error_code else api_error_code
+                            error_reason = "认证令牌失效"
+                        else:
+                            # 通用错误处理
+                            error_reason = msg.replace("预约失败: ", "").strip()
                     
                     # 格式化失败结果
                     results.append(f"【失败】{item_name}    【代码&原因】{error_code}-{error_reason}")

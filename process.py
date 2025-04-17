@@ -645,7 +645,11 @@ def reservation(params: dict, mobile: str, max_retries: int = 3):
         
         # 如果请求失败
         if response is None:
-            error_msg = "预约请求最终失败，请检查网络连接和API可用性"
+            # 检查是否有捕获到的最后一次API错误
+            if hasattr(request_url_with_retry, 'last_error_code') and hasattr(request_url_with_retry, 'last_error_message'):
+                error_msg = f"预约失败: 代码={request_url_with_retry.last_error_code}, 信息={request_url_with_retry.last_error_message}"
+            else:
+                error_msg = "预约请求最终失败，请检查网络连接和API可用性"
             print(f"[{datetime.datetime.now()}] ❌ {error_msg}")
             return False, error_msg
         
@@ -1301,6 +1305,11 @@ def request_url_with_retry(url, method="GET", headers=None, json_data=None, time
                     resp_json = response.json()
                     api_code = resp_json.get('code')
                     
+                    # 记录最后一次API错误
+                    if api_code != 2000:  # 非成功状态码
+                        request_url_with_retry.last_error_code = str(api_code)
+                        request_url_with_retry.last_error_message = resp_json.get('message', '未知错误')
+                    
                     # 如果API返回ianus认证错误，尝试下一次重试
                     if api_code == 4011 and 'ianus' in str(resp_json) and retry_count < max_retries - 1:
                         print(f"[{datetime.datetime.now()}] ⚠️ API返回ianus认证错误(4011)，将尝试重试...")
@@ -1327,6 +1336,10 @@ def request_url_with_retry(url, method="GET", headers=None, json_data=None, time
                     error_msg = error_data.get('message', '未提供错误信息')
                     print(f"[{datetime.datetime.now()}] 详细错误: 代码={error_code}, 信息={error_msg}")
                     
+                    # 记录最后一次错误信息
+                    request_url_with_retry.last_error_code = str(error_code)
+                    request_url_with_retry.last_error_message = error_msg
+                    
                     # 特别处理ianus认证错误
                     if error_code == 4011 and 'ianus' in error_msg:
                         print(f"[{datetime.datetime.now()}] ⚠️ Ianus认证错误，将尝试使用新的认证机制...")
@@ -1346,6 +1359,15 @@ def request_url_with_retry(url, method="GET", headers=None, json_data=None, time
                 try:
                     error_text = response.text
                     print(f"[{datetime.datetime.now()}] 错误详情: {error_text[:200]}")
+                    
+                    # 尝试解析JSON并记录错误
+                    try:
+                        error_data = response.json()
+                        if 'code' in error_data and 'message' in error_data:
+                            request_url_with_retry.last_error_code = str(error_data.get('code'))
+                            request_url_with_retry.last_error_message = error_data.get('message')
+                    except:
+                        pass
                 except:
                     pass
                     
