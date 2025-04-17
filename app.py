@@ -959,10 +959,17 @@ def background_task_runner():
                     now = datetime.datetime.now()
                     current_time = now.time()
                     
+                    # 设置时间限制：只在9:00至10:00之间执行任务
+                    valid_start_time = datetime.time(9, 0)
+                    valid_end_time = datetime.time(10, 0)
+                    is_valid_time = valid_start_time <= current_time < valid_end_time
+                    
                     # 获取所有启用的任务
                     enabled_tasks = TaskSetting.query.filter_by(enabled=True).all()
                     if enabled_tasks:
                         print(f"[{now}] 当前时间: {current_time}, 检测到 {len(enabled_tasks)} 个启用的任务")
+                        if not is_valid_time:
+                            print(f"[{now}] 当前时间不在预约时间范围内(9:00-10:00)，任务将不会执行")
                     
                     for task in enabled_tasks:
                         # 检查账号是否可用
@@ -989,6 +996,10 @@ def background_task_runner():
                         # 对每个任务进行报告，便于排查
                         print(f"[{now}] 任务ID={task.id}, 设定时间={task_time}, 当前分钟差={minutes_diff}, 今日已执行={already_run_today}")
                         
+                        # 添加时间限制检查：只在9:00至10:00之间执行
+                        if not is_valid_time:
+                            continue
+                            
                         # 如果时间在1分钟内且今天还没有运行过
                         if minutes_diff <= 1 and not already_run_today:
                             print(f"\n[{now}] ===开始执行任务: ID={task.id}, 时间={task_time}, 账号={account_info}, 商品={item_codes}===\n")
