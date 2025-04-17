@@ -843,6 +843,25 @@ def real_reservation(task):
 
         db.session.commit()
         print(f"[{datetime.datetime.now()}] 数据库记录已提交")
+        
+        # 尝试领取耐力和小茅运
+        try:
+            print(f"[{datetime.datetime.now()}] 开始领取耐力和小茅运")
+            # 获取账号信息
+            account = MaotaiAccount.query.get(task.mt_account_id)
+            if account:
+                # 初始化AES密钥
+                aes_key = privateCrypt.get_aes_key()
+                # 解密手机号
+                mobile = privateCrypt.decrypt_aes_ecb(account.mobile, aes_key)
+                
+                # 调用getUserEnergyAward接口领取奖励
+                process.getUserEnergyAward(mobile)
+                print(f"[{datetime.datetime.now()}] 已尝试领取耐力和小茅运")
+            else:
+                print(f"[{datetime.datetime.now()}] 未找到账号信息，无法领取耐力和小茅运")
+        except Exception as e:
+            print(f"[{datetime.datetime.now()}] 领取耐力和小茅运时出错: {str(e)}")
 
         result_message = "，".join(results)
         message_title = "【成功】茅台预约" if all_success else "【部分成功/失败】茅台预约"
@@ -856,7 +875,8 @@ def real_reservation(task):
         message_content = f"""用户: {username} 
 预约时间: {formatted_time} 
 账号: {mobile[:3]}****{mobile[-4:]} 
-商品结果: {chr(10).join(results)}
+商品结果: 
+{chr(10).join(results)}
         """
 
         # 发送消息推送
