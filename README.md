@@ -89,11 +89,6 @@ python3 app.py
    - 每个预约任务都可以关联特定的i茅台账号
    - 可以为不同账号创建不同的预约任务
 
-## 特别感谢
-技术思路：https://blog.csdn.net/weixin_47481826/article/details/128893239
-
-初版代码：https://github.com/tianyagogogo/imaotai
-
 ## 更新内容
 
 ### 多商品选择功能
