@@ -1223,6 +1223,21 @@ def get_verification_code():
         return jsonify({'error': '请输入正确的手机号'}), 400
     
     try:
+        # 初始化AES密钥，用于检查手机号是否已存在
+        aes_key = privateCrypt.get_aes_key()
+        
+        # 加密手机号用于查询
+        encrypted_mobile = privateCrypt.encrypt_aes_ecb(mobile, aes_key)
+        
+        # 检查当前用户是否已有该手机号关联的账号
+        existing_account = MaotaiAccount.query.filter_by(
+            user_id=current_user.id,
+            mobile=encrypted_mobile
+        ).first()
+        
+        if existing_account:
+            return jsonify({'error': f'您已添加过该手机号账号（{existing_account.hidemobile}），请勿重复添加'}), 400
+        
         # 初始化headers确保API可以正常调用
         process.init_headers()
         # 调用process模块发送验证码
@@ -1361,8 +1376,26 @@ def get_verification_code_mock():
     if not mobile or not mobile.isdigit() or len(mobile) != 11:
         return jsonify({'error': '请输入正确的手机号'}), 400
     
-    # 模拟发送验证码，实际上不会发送
-    return jsonify({'success': True, 'message': '验证码已发送（模拟）'})
+    try:
+        # 初始化AES密钥，用于检查手机号是否已存在
+        aes_key = privateCrypt.get_aes_key()
+        
+        # 加密手机号用于查询
+        encrypted_mobile = privateCrypt.encrypt_aes_ecb(mobile, aes_key)
+        
+        # 检查当前用户是否已有该手机号关联的账号
+        existing_account = MaotaiAccount.query.filter_by(
+            user_id=current_user.id,
+            mobile=encrypted_mobile
+        ).first()
+        
+        if existing_account:
+            return jsonify({'error': f'您已添加过该手机号账号（{existing_account.hidemobile}），请勿重复添加'}), 400
+    
+        # 模拟发送验证码，实际上不会发送
+        return jsonify({'success': True, 'message': '验证码已发送（模拟）'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/verify_code_mock', methods=['POST'])
 @login_required
